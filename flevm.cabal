@@ -1,0 +1,115 @@
+name:                flevm
+version:             0.1.0.0
+-- synopsis:
+-- description:
+homepage:            https://github.com/githubuser/flevm#readme
+license:             BSD3
+license-file:        LICENSE
+author:              Author name here
+maintainer:          example@example.com
+copyright:           2017 Author name here
+category:            Web
+build-type:          Simple
+cabal-version:       >=1.10
+extra-source-files:  README.md
+
+library
+  hs-source-dirs:      src
+  default-language:    Haskell2010
+  exposed-modules:     Fluidity.Common.Binary
+                     , Fluidity.Common.Crypto
+                     , Fluidity.EVM
+                     , Fluidity.EVM.Analyse.Outcome
+                     , Fluidity.EVM.Blockchain
+                     , Fluidity.EVM.Bytecode
+                     , Fluidity.EVM.Control
+                     , Fluidity.EVM.Data
+                     , Fluidity.EVM.Decode
+                     , Fluidity.EVM.Parallel
+                     , Fluidity.EVM.Provenance
+                     , Fluidity.EVM.REPL
+                     , Fluidity.EVM.REPL.Chain
+                     , Fluidity.EVM.REPL.Command
+                     , Fluidity.EVM.REPL.EVM
+                     , Fluidity.EVM.REPL.Help
+                     , Fluidity.EVM.REPL.Meta
+                     , Fluidity.EVM.REPL.Monad
+                     , Fluidity.EVM.REPL.Parallel
+                     , Fluidity.EVM.REPL.Parser
+                     , Fluidity.EVM.REPL.State
+                     , Fluidity.EVM.Text
+                     , Fluidity.EVM.Types
+                     , Fluidity.EVM.VM
+                     , Confound.Methods
+                     , Confound.Types
+                     , Confound.Util
+                     , Control.Monad.Interruptible
+                     , Control.Monad.Execution
+                     , Control.Monad.Result
+                     , Control.Monad.Resultant
+                     , Text.Structured
+  build-depends:       base >= 4.7 && < 5
+                     , array
+                     , bits-bytestring
+                     , base16-bytestring
+                     , bytestring
+                     , containers
+                     , cryptonite
+                     , deepseq
+                     , filepath
+                     , haskeline
+                     , memory
+                     , monad-loops
+                     , parallel
+                     , parsec
+                     , split
+                     , strict
+                     , text
+                     , time
+
+executable flevm
+  hs-source-dirs:      app
+  main-is:             Main.hs
+  default-language:    Haskell2010
+  ghc-options:         -threaded -rtsopts -with-rtsopts=-N
+  build-depends:       base >= 4.7 && < 5
+                     , flevm
+                     , optparse-applicative
+                     , text
+
+executable confound
+  hs-source-dirs:      src
+  main-is:             ConfoundMain.hs
+  default-language:    Haskell2010
+  other-modules:       Confound.Contracts
+                     , Confound.Methods
+                     , Confound.Types
+                     , Confound.Util
+                     , Control.Monad.Result
+                     , Control.Monad.Resultant
+                     , Fluidity.Common.Binary
+  build-depends:       base >= 4.7 && < 5
+                     , array
+                     , base16-bytestring
+                     , bytestring
+                     , containers
+                     , cryptonite
+                     , deepseq
+                     , filepath
+                     , haskeline
+                     , memory
+                     , monad-loops
+                     , optparse-applicative
+                     , split
+                     , text
+
+test-suite execution
+  type:                exitcode-stdio-1.0
+  hs-source-dirs:      test
+  main-is:             Spec.hs
+  default-language:    Haskell2010
+  build-depends:       base >= 4.7 && < 5
+                     , flevm
+  other-modules:       Test.Control.Monad.ExecutionSpec
+
+
