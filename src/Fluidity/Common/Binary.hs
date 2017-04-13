@@ -2,7 +2,8 @@
 
 module Fluidity.Common.Binary where
 
-import Data.Bits (Bits, (.|.), shiftL, shiftR)
+import Data.Bits (Bits, (.|.), shiftL, shiftR, testBit, complement)
+import Data.Bits.ByteString ()
 import Data.ByteString (ByteString)
 import Data.Word (Word8, Word16, Word32, Word64)
 import Text.Printf (printf)
@@ -51,6 +52,9 @@ instance Bytes Int where
 toHex :: (Bytes a, Bytes b) => a -> b
 toHex = fromBytes . B16.encode . toBytes
 
+toHexS :: Bytes a => a -> String
+toHexS = toHex
+
 fromHex :: (Bytes a, Bytes b) => a -> b
 fromHex = fromBytes . fst . B16.decode . toBytes
 
@@ -74,9 +78,20 @@ padBytes n bs =
         z   = B.pack $ take (n - len) (repeat 0)
     in z `B.append` bs
 
+-- Like `take`, but takes from the right of the ByteString
+truncate :: Int -> ByteString -> ByteString
+truncate n bs = B.drop (max 0 $ B.length bs - n) bs
+
 toBool :: Word -> Bool
 toBool x = not $ x == 0
 
+-- Convert unsigned -> signed using a given word size
+fromTwosComplement :: Int -> Integer -> Integer
+fromTwosComplement sz x = 
+  if testBit bs 0 
+  then negate $ roll (complement bs) + 1
+  else x
+  where bs = padBytes 32 $ toBytes x
 
 -- Bytestring <-> Integer
 -- ---------------------------------------------------------------------

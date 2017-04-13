@@ -17,6 +17,9 @@ class Structured a where
   typeset :: a -> Text
   typeset = render . fmt
 
+  toString :: a -> String
+  toString = T.unpack . typeset
+
 instance Structured Fragment where
   fmt = id
 
@@ -94,6 +97,18 @@ hexdigits :: Int -> Int -> Fragment
 hexdigits n x = 
   let s :: String
       s = printf ("%0" ++ (show n) ++ "x") x
+  in fmt s
+
+padLeft :: Int -> String -> Fragment
+padLeft n x = 
+  let s :: String
+      s = printf ("%" ++ (show n) ++ "s") x
+  in fmt s
+
+padRight :: Int -> String -> Fragment
+padRight n x = 
+  let s :: String
+      s = printf ("%-" ++ (show n) ++ "s") x
   in fmt s
 
 

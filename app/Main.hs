@@ -9,7 +9,7 @@ import Control.Monad.Resultant
 import Text.Structured (typeset, withLineNumbers)
 
 import qualified Fluidity.EVM as EVM
-import Fluidity.EVM (EVM, Error)
+import Fluidity.EVM (EVM, REPLOpts(..), Error)
 
 
 data Options = Options
@@ -20,7 +20,8 @@ data Options = Options
 data Command
   = Run FilePath
   | Disassemble FilePath
-  | REPL (Maybe FilePath) FilePath
+  | Import FilePath
+  | REPL REPLOpts
   deriving (Show)
 
 readCLIOpts :: IO Options
@@ -41,7 +42,9 @@ readCLIOpts =
          <> Opts.command "repl" (Opts.info replOpts
             ( Opts.progDesc "Start in interactive mode." ))
          <> Opts.command "disasm" (Opts.info disasmOpts
-            ( Opts.progDesc "Disassemble compiled EVM bytecode." )))
+            ( Opts.progDesc "Disassemble compiled EVM bytecode." ))
+         <> Opts.command "import" (Opts.info importOpts
+            ( Opts.progDesc "Import a Parity snapshot." )))
     runOpts = Run
       <$> Opts.argument Opts.str
           ( Opts.metavar "FILE"
@@ -50,15 +53,26 @@ readCLIOpts =
       <$> Opts.argument Opts.str
           ( Opts.metavar "FILE"
          <> Opts.help "EVM program" )
-    replOpts = REPL
-      <$> Opts.optional (Opts.strOption
-          ( Opts.long "snapshot"
+    importOpts = Import
+      <$> Opts.argument Opts.str
+          ( Opts.metavar "DIR"
+         <> Opts.help "Parity snapshot directory" )
+    replOpts = REPL <$> (REPLOpts
+      <$> Opts.strOption
+          ( Opts.long "snapshot-dir"
          <> Opts.short 's'
          <> Opts.metavar "DIR"
-         <> Opts.help "Directory containing contracts" ))
-      <*> Opts.argument Opts.str
-          ( Opts.metavar "FILE"
-         <> Opts.help "EVM program binary, or a list of filenames (snapshot mode)" )
+         <> Opts.value ".aevm"
+         <> Opts.help "Path to blockchain snapshot" )
+      <*> Opts.optional (Opts.option Opts.auto
+          ( Opts.long "max-chunks"
+         <> Opts.short 'm'
+         <> Opts.metavar "NUM"
+         <> Opts.help "Maximum number of snapshot chunks to load" ))
+      <*> Opts.switch
+          ( Opts.long "no-dupes"
+         <> Opts.short 'u'
+         <> Opts.help "Unique contracts only, don't load duplicates."))
 
 disasm :: Options -> FilePath -> EVM ()
 disasm opts inputFile = error "not implemented"
@@ -70,8 +84,8 @@ runProgram opts inputFile = error "not implemented"
   --prog <- EVM.load inputFile
   --EVM.runProgram prog
 
-repl :: Maybe FilePath -> FilePath -> EVM ()
-repl dir inputFile = EVM.repl dir inputFile
+runImport :: FilePath -> EVM ()
+runImport dir = EVM.importSnapshot dir ".aevm"
 
 printError :: Error -> IO ()
 printError x = do
@@ -84,7 +98,8 @@ main = do
   result <- EVM.run $ case optCommand opts of
     Run x         -> runProgram opts x
     Disassemble x -> disasm opts x
-    REPL m x      -> repl m x
+    REPL x        -> EVM.repl x
+    Import x      -> runImport x
   case result of
      Ok _  -> return ()
      Err e -> printError e

@@ -18,9 +18,9 @@ module Control.Monad.Execution where
 import Prelude hiding (fail)
 import Control.Monad (join)
 
-import Control.Monad.Result (Result, mapError)
-import Control.Monad.Resultant (ResultantMonad, ResultantT(ResultantT),
-  lift, fail, point, runResultantT, getState, setState)
+import Control.Monad.Result --(Result, mapError)
+import Control.Monad.Resultant -- (ResultantMonad, ResultantT(ResultantT),
+--  lift, fail, point, runResultantT, getState, setState)
 import Control.Monad.Interruptible (InterruptibleT(InterruptibleT)
   , Interruption(Done, Cont), lifti, imap, mapInterrupt, runInterruptibleT)
 
@@ -42,7 +42,7 @@ type Execution m i s e = ResultantT (InterruptibleT m (i, s)) s e
 -- process off.
 --
 -- The result is the final state and (if execution completed) the return value.
-execute :: (Monad m, ResultantMonad r e') => Execution m i s e a -> (e -> e') -> (forall b. m (Interruption m (i, s) (s, b)) -> r (Interruption m (i, s) (s, b))) -> (i -> s -> r Bool) -> s -> r (s, Maybe a)
+execute :: (Monad m, Rise r ri rs re) => Execution m i s e a -> (e -> re) -> (forall b. m (Interruption m (i, s) (s, b)) -> (r ri rs re) (Interruption m (i, s) (s, b))) -> (i -> s -> (r ri rs re) Bool) -> s -> (r ri rs re) (s, Maybe a)
 execute task adaptError run handler state = do
   (st, result) <- runHandlerR run handler $ runResultantT task state
   case result of
@@ -62,13 +62,13 @@ executeR task run handler state = do
       return (st, Right $ join r)
 
 -- | Run an Execution and fail if it is interrupted.
-uninterruptible :: (Monad m, ResultantMonad r e') => Execution m i s e a -> (e -> e') -> (i -> e') -> (forall b. m (Interruption m (i, s) (s, b)) -> r (Interruption m (i, s) (s, b))) -> s -> r (s, a)
+uninterruptible :: (Monad m, Rise r ri rs re) => Execution m i s e a -> (e -> re) -> (i -> re) -> (forall b. m (Interruption m (i, s) (s, b)) -> (r ri rs re) (Interruption m (i, s) (s, b))) -> s -> (r ri rs re) (s, a)
 uninterruptible task adaptError interruptError run state = do
   (st, r) <- execute task adaptError run (alwaysFail interruptError) state
   case r of Just x -> return (st, x) -- the result will never be Nothing because the interrupt handler always fails
 
 -- | Like `uninterruptible`, but discards the final state
-query :: (Monad m, ResultantMonad r e') => Execution m i s e a -> (e -> e') -> (i -> e') -> (forall b. m (Interruption m (i, s) (s, b)) -> r (Interruption m (i, s) (s, b))) -> s -> r a
+query :: (Monad m, Rise r ri rs re) => Execution m i s e a -> (e -> re) -> (i -> re) -> (forall b. m (Interruption m (i, s) (s, b)) -> (r ri rs re) (Interruption m (i, s) (s, b))) -> s -> (r ri rs re) a
 query task adaptError interruptError run state =
   snd <$> uninterruptible task adaptError interruptError run state
 
@@ -94,7 +94,7 @@ handleNothing :: Monad m => i -> s -> m Bool
 handleNothing _ _ = return False
 
 -- | An interrupt handler that always fails, wrapping the interrupt in an error
-alwaysFail :: ResultantMonad r e => (i -> e) -> i -> s -> r Bool
+alwaysFail :: Rise r ri rs re => (i -> re) -> i -> s -> (r ri rs re) Bool
 alwaysFail f i _ = fail $ f i
 
 -- | Like Interruptible's runHandlerM, but with Result instead of Maybe and the interrupt handler receives state

@@ -1,15 +1,20 @@
 module Fluidity.EVM.REPL.Command where
 
 import Data.ByteString (ByteString)
+import Data.List (isPrefixOf)
+import System.Console.Haskeline.Completion
+
+import Fluidity.EVM.Data.Value (Value)
+import Fluidity.EVM.Data.ByteField (ByteField)
 
 
 data Command
-  = EVM      EVM
-  | State    State
-  | Chain    Chain
-  | Trace    Trace
-  | Parallel Parallel
+  = Chain    Chain
+  | EVM      EVM
   | Meta     Meta
+  | Monitor  Monitor
+  | Parallel Parallel
+  | State    State
 
 
 -- Commands under EVM
@@ -19,7 +24,7 @@ data EVM
   = Go
   | Step
   | BreakAt Integer
-  | Call Address Integer (Maybe Integer) (Maybe CallData)
+  | Call Address Value Value ByteField
   | Inspect Inspect
 
 data CallData
@@ -76,7 +81,7 @@ data State
 -- ---------------------------------------------------------------------
 
 data Parallel
-  = ParCall SetRef Integer (Maybe Integer) (Maybe CallData) (Maybe PostProcess)
+  = ParCall SetRef Value Value ByteField (Maybe PostProcess)
   | ParSets ParSets
 
 data ParSets
@@ -84,6 +89,14 @@ data ParSets
   | ParSetShow String
   | ParSetDrop String
   | ParSetShowStorage String
+
+
+-- Monitor
+-- ---------------------------------------------------------------------
+
+data Monitor
+  = MonOn
+  | MonOff
 
 
 -- Meta
@@ -128,9 +141,51 @@ data Filter
 type SaveTarget = String
 
 
--- To be reworked or removed
+-- Tab completeion
 -- ---------------------------------------------------------------------
+data Trace = TraceD
 
-data Trace
-  = TraceValue Integer
+complete :: (String, String) -> IO (String, [Completion])
+complete (revline, partial) =
+  let
+    line = reverse revline
+
+    menu :: (String, [String]) -> [Completion]
+    menu (name, items) =
+      let
+        prefix = case name of
+          ""  -> ""
+          _   -> name ++ " "
+        elems = (++) <$> [prefix] <*> items
+      in 
+        map (\c -> Completion c (last $ words c) True) (filter (isPrefixOf line) elems)
+
+    topLevel    = ("",                      ["chain", "evm", "mon", "par", "state", ":help", ":quit"])
+    evmMenu     = ("evm",                   ["breakat", "call", "go", "inspect", "step"])
+    inspectMenu = ("evm inspect",           ["call", "code", "memory", "stack", "storage"])
+    chainMenu   = ("chain",                 ["account", "block"])
+    blockMenu   = ("chain block",           ["commit", "list", "show"])
+    accountMenu = ("chain account",         ["balance", "drop", "list", "show", "storage"])
+    balanceMenu = ("chain account balance", ["get", "set"])
+    storageMenu = ("chain account storage", ["get", "getkey", "setkey"])
+    parMenu     = ("par",                   ["call", "set"])
+    parsetMenu  = ("par set",               ["drop", "list", "show", "showstorage"])
+    monitorMenu = ("mon",                   ["on", "off"])
+    stateMenu   = ("state",                 ["drop", "list","load","save"])
+
+  in do
+    return . (,) partial $ case words line of
+      "chain" :r -> case r of "block"   :r -> menu blockMenu
+                              "account" :r -> case r of "balance" :r -> menu balanceMenu
+                                                        "storage" :r -> menu storageMenu
+                                                        _            -> menu accountMenu
+                              _            -> menu chainMenu
+      "evm"   :r -> case r of "inspect" :r -> menu inspectMenu
+                              _            -> menu evmMenu
+      "mon"   :r -> case r of _            -> menu monitorMenu
+      "par"   :r -> case r of "set"     :r -> menu parsetMenu
+                              _            -> menu parMenu
+      "state" :r -> case r of _            -> menu stateMenu
+      _          -> menu topLevel
+
 

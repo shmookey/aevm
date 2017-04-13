@@ -18,17 +18,19 @@ import Confound.Methods (methodHash')
 import Fluidity.Common.Binary (padBytes, unroll, toHex)
 import Fluidity.EVM.REPL.Monad
 import Fluidity.EVM.Types
-import Fluidity.EVM.Data (Value, ByteField, formatStub, formatAddress)
-import Fluidity.EVM.Blockchain (MessageCall(..), Account(..))
+import Fluidity.EVM.Data.Account (Account(..))
+import Fluidity.EVM.Data.Transaction (MessageCall(..))
+import Fluidity.EVM.Data.Value
+import Fluidity.EVM.Data.Format (stubAddress)
+import Fluidity.EVM.Data.ByteField
 import Fluidity.EVM.Analyse.Outcome (PostMortem)
-import Fluidity.EVM.REPL.EVM (encodeCallData)
 import Fluidity.EVM.Text (formatStorage)
 import qualified Fluidity.EVM.Analyse.Outcome as Outcome
 import qualified Fluidity.EVM.Blockchain as Blockchain
 import qualified Fluidity.EVM.Parallel as Parallel
 import qualified Fluidity.EVM.Control as Control
 import qualified Fluidity.EVM.REPL.Command as Cmd
-import qualified Fluidity.EVM.Data as Data
+import qualified Fluidity.EVM.Data.Format as Format
 
 
 runCommand :: Cmd.Parallel -> REPL ()
@@ -42,25 +44,21 @@ runCommand cmd = case cmd of
       Cmd.ParSetShowStorage x -> showStorage x
 
 
-call :: Cmd.SetRef -> Integer -> Maybe Integer -> Maybe Cmd.CallData -> Maybe Cmd.PostProcess -> REPL ()
-call ref val g cd post =
+call :: Cmd.SetRef -> Value -> Value -> ByteField -> Maybe Cmd.PostProcess -> REPL ()
+call ref value gas calldata post =
   let
-    value    = Data.mkCallValue val
-    gas      = Data.mkInitialGas $ Maybe.fromMaybe 1000 g
-    calldata = maybe Data.fresh encodeCallData cd
-
-    msgcall :: Address -> Address -> MessageCall
+    msgcall :: Address -> ByteString -> MessageCall
     msgcall from to = MessageCall
       { msgCaller = from
-      , msgCallee = to
+      , msgCallee = mkAddress to
       , msgValue  = value
       , msgGas    = gas
       , msgData   = calldata
       }
 
-    showResult :: (Address, PostMortem, Control.State) -> String
+    showResult :: (ByteString, PostMortem, Control.State) -> String
     showResult (addr, pm, _) =
-      formatStub addr ++ " " ++ Outcome.explainPostMortem pm
+      stubAddress addr ++ " " ++ Outcome.explainPostMortem pm
 
     combinedFilter :: PostMortem -> Bool     
     combinedFilter = case post of 
@@ -79,7 +77,7 @@ call ref val g cd post =
       Cmd.FilterSend    -> Outcome.pmSentFunds
       Cmd.FilterNotImpl -> Outcome.pmNeedsImpl
 
-    outputSaver :: [(Address, PostMortem, Control.State)] -> REPL ()
+    outputSaver :: [(ByteString, PostMortem, Control.State)] -> REPL ()
     outputSaver kvs = case post of
       Just (_, Just x) -> do 
         saveSet x . ParSet $ map (\(addr, _, st) -> (addr, st)) kvs
@@ -87,7 +85,7 @@ call ref val g cd post =
       _ -> return ()
 
   in do
-    putStrLn $ toHex (Data.fieldToByteString calldata)
+    putStrLn $ toHex calldata
     caller     <- getAddress
     callees    <- resolveRef ref
     msgs       <- 
@@ -108,7 +106,7 @@ call ref val g cd post =
 -- Set functions
 -- ---------------------------------------------------------------------
 
-resolveRef :: Cmd.SetRef -> REPL (Either [Address] ParSet)
+resolveRef :: Cmd.SetRef -> REPL (Either [ByteString] ParSet)
 resolveRef sr = case sr of
   Cmd.SetRange addr -> Left <$> matchingAddresses addr
   Cmd.SetAlias x    -> Right <$> getSet x
@@ -121,7 +119,7 @@ listSets = do
 showSet :: String -> REPL ()
 showSet x = do
   (ParSet entries) <- getSet x
-  mapM_ (putStrLn . formatAddress) $ map fst entries
+  mapM_ (putStrLn . Format.address) $ map fst entries
 
 dropSet :: String -> REPL ()
 dropSet x = updateParSets $ Map.delete x
@@ -140,14 +138,14 @@ saveSet x ps = updateParSets $ Map.insert x ps
 showStorage :: String -> REPL ()
 showStorage x = 
   let
-    show1 :: Address -> Control.State -> REPL ()
+    show1 :: ByteString -> Control.State -> REPL ()
     show1 addr st = 
       let
         bc    = Control.stBlockchain st
         accts = Blockchain.stAccounts bc
         Just (Contract _ _ storage) = Map.lookup addr accts
      in do
-       printLn $ formatAddress addr ~~ ":"
+       printLn $ Format.address addr ~~ ":"
        printLn $ formatStorage storage
   in do
     (ParSet entries) <- getSet x

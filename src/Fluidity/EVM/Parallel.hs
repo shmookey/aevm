@@ -6,6 +6,7 @@ import Control.Parallel.Strategies
 import Control.DeepSeq
 import GHC.Generics (Generic)
 import Data.Functor.Identity (Identity(runIdentity))
+import Data.ByteString (ByteString)
 
 import Control.Monad.Result
 import Control.Monad.Resultant
@@ -13,7 +14,8 @@ import qualified Control.Monad.Execution as Execution
 
 import Fluidity.EVM.Control (Control)
 import Fluidity.EVM.Types
-import Fluidity.EVM.Blockchain (MessageCall(..))
+import Fluidity.EVM.Data.Value
+import Fluidity.EVM.Data.Transaction (MessageCall(..))
 import Fluidity.EVM.Analyse.Outcome (CallReport(CallReport), PostMortem)
 import qualified Fluidity.EVM.Control as Control
 import qualified Fluidity.EVM.Analyse.Outcome as Outcome
@@ -31,7 +33,7 @@ data Error
   | ControlError String
   deriving (Show, Generic, NFData)
 
-multicall :: [(MessageCall, Control.State)] -> [(Address, PostMortem, Control.State)]
+multicall :: [(MessageCall, Control.State)] -> [(ByteString, PostMortem, Control.State)]
 multicall calls =
   let
     analyticMode state = state
@@ -39,11 +41,11 @@ multicall calls =
       , Control.stAnalyticMode  = True
       }
 
-    process :: MessageCall -> ([VM.Interrupt], Control.State, Result Control.Error ()) -> (Address, PostMortem, Control.State)
+    process :: MessageCall -> ([VM.Interrupt], Control.State, Result Control.Error ()) -> (ByteString, PostMortem, Control.State)
     process msg (ints, st, result) =
-      (msgCallee msg, Outcome.postMortem (CallReport msg ints result), st)
+      (bytes $ msgCallee msg, Outcome.postMortem (CallReport msg ints result), st)
 
-    task :: (MessageCall, Control.State) -> (Address, PostMortem, Control.State)
+    task :: (MessageCall, Control.State) -> (ByteString, PostMortem, Control.State)
     task (msg, state) = 
         process msg 
       . runTask 
@@ -65,8 +67,8 @@ createTask state ma =
   let
     handleInterrupt :: Control.Interrupt -> Control.State -> Task Bool
     handleInterrupt i _ = case i of
-      Control.VMInterrupt x -> (updateState $ (:) x) >> return True
-      _                     -> return True
+      Control.VMInterrupt x _ -> (updateState $ (:) x) >> return True
+      _                       -> return True 
 
     runControl :: Identity a -> Task a
     runControl ma =

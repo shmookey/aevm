@@ -6,17 +6,18 @@ import Data.List (intercalate)
 import Data.Semigroup ((<>))
 import Data.ByteString (ByteString)
 import Data.Time.Clock as Clock
+import qualified Data.Maybe as M
 
 import Control.Monad.Result
 import Control.Monad.Resultant
 import Text.Structured (typeset)
 
-import Confound.Methods (methodHash')
-import Fluidity.Common.Binary (padBytes, unroll)
 import Fluidity.EVM.REPL.Monad
 import Fluidity.EVM.Types
-import Fluidity.EVM.Data (Value, ByteField, formatStub)
-import Fluidity.EVM.Blockchain (MessageCall(..))
+import Fluidity.EVM.Data.Value
+import Fluidity.EVM.Data.ByteField
+import Fluidity.EVM.Data.Format (stub)
+import Fluidity.EVM.Data.Transaction (MessageCall(..))
 import Fluidity.EVM.Analyse.Outcome (PostMortem)
 import Fluidity.EVM.Text ()
 import qualified Fluidity.EVM.Analyse.Outcome as Outcome
@@ -24,7 +25,6 @@ import qualified Fluidity.EVM.Blockchain as Blockchain
 import qualified Fluidity.EVM.Parallel as Parallel
 import qualified Fluidity.EVM.Control as Control
 import qualified Fluidity.EVM.REPL.Command as Cmd
-import qualified Fluidity.EVM.Data as Data
 import qualified Fluidity.EVM.VM as VM
 
 
@@ -51,27 +51,19 @@ step = yield Control.step
 breakAt :: Integer -> REPL ()
 breakAt = yield . Control.breakAt . fromInteger
 
-call :: Cmd.Address -> Integer -> Maybe Integer -> Maybe Cmd.CallData -> REPL ()
-call addr value gas calldata =
-  let
-    value'    = Data.mkCallValue value
-    gas'      = case gas of Just g  -> Data.mkInitialGas g
-                            Nothing -> Data.mkInitialGas 1000
-    calldata' = case calldata of Just cd -> encodeCallData cd
-                                 Nothing -> Data.fresh
-  in do
-    caller  <- getAddress
-    callees <- matchingAddresses addr
-    case callees of
-      [callee] -> yield . Control.call
-        $ MessageCall
-          { msgCaller = caller
-          , msgCallee = callee
-          , msgValue  = value'
-          , msgGas    = gas'
-          , msgData   = calldata'
-          }
-      _ -> fail $ InternalError
+call :: Cmd.Address -> Value -> Value -> ByteField -> REPL ()
+call addr value gas calldata = do
+  caller <- getAddress
+  callee <- uniqueAddress addr
+  let msg = MessageCall
+              { msgCaller = caller
+              , msgCallee = mkAddress callee
+              , msgValue  = value
+              , msgGas    = gas
+              , msgData   = calldata
+              }
+  printLn msg
+  yield $ Control.call msg
 
 inspectStack :: REPL ()
 inspectStack = do
@@ -104,37 +96,4 @@ inspectCode ref = do
   let call = VM.stCall vmState
   putStrLn (show vmState)
 
-
-encodeCallData :: Cmd.CallData -> CallData
-encodeCallData cd =
-  let
-    -- for now just use the Confound version
-    encodeMethod :: String -> [Cmd.MethodArg] -> CallData
-    encodeMethod name args =
-      let
-        argsStr = intercalate "," $ map argType args
-        sig     = name ++ "(" ++ argsStr ++ ")"
-        hash    = methodHash' sig
-      in
-        asByteField $ hash <> mconcat (map argVal args)
-
-    argVal :: Cmd.MethodArg -> ByteString
-    argVal arg = case arg of
-      Cmd.NumArg v _    -> padBytes 32 $ unroll v
-      Cmd.BoolArg True  -> padBytes 32 $ unroll (1 :: Int)
-      Cmd.BoolArg False -> padBytes 32 $ unroll (0 :: Int)
-      Cmd.AddrArg addr  -> padBytes 32 addr
-
-    argType :: Cmd.MethodArg -> String
-    argType arg = case arg of
-      Cmd.NumArg _ t -> t
-      Cmd.BoolArg _  -> "bool"
-      Cmd.AddrArg _  -> "address"
-    
-    asByteField :: ByteString -> ByteField
-    asByteField = Data.prefill Data.CallData
-
-  in case cd of
-    Cmd.RawCall bs -> asByteField bs
-    Cmd.MethodCall x args -> encodeMethod x args
 

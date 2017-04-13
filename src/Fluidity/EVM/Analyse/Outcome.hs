@@ -9,10 +9,11 @@ import Control.DeepSeq
 import Control.Monad.Result
 
 import Fluidity.EVM.Types (Address)
-import Fluidity.EVM.Blockchain (MessageCall(..))
-import Fluidity.EVM.Data (Value, ByteField, asBytesAddress, asUInt)
+import Fluidity.EVM.Data.Transaction (MessageCall(..))
+import Fluidity.EVM.Data.Value (Value, uint)
+import Fluidity.EVM.Data.ByteField (ByteField)
+import Fluidity.EVM.Data.Bytecode (Op(Invalid))
 import qualified Fluidity.EVM.VM as VM
-import qualified Fluidity.EVM.Types as Ty
 import qualified Fluidity.EVM.Control as Control
 
 
@@ -28,7 +29,7 @@ data CauseOfDeath
   | Return ByteField
   | InvalidJump
   | OutOfGas
-  | NotImplemented Ty.Op
+  | NotImplemented Op
   | InvalidPC
   | InvalidOp
   | Other
@@ -41,7 +42,6 @@ data PostMortem = PostMortem
   , pmProbableThrow     :: Bool
   , pmWroteStorage      :: Bool
   , pmReadStorage       :: Bool
-  , pmCheckedOwnBalance :: Bool
   , pmSentFunds         :: Bool
   , pmMadeExtCall       :: Bool
 --  , pmCheckedGas        :: Bool
@@ -66,7 +66,6 @@ postMortem report =
     , pmProbableThrow     = isProbableThrow causeOfDeath
     , pmWroteStorage      = any isStorageWrite interrupts
     , pmReadStorage       = any isStorageRead interrupts
-    , pmCheckedOwnBalance = any (isCheckOwnBalance callee) interrupts
     , pmSentFunds         = any isSendFunds interrupts
     , pmMadeExtCall       = any isExternalCall interrupts
 --    , pmCheckedGas        = 
@@ -83,7 +82,6 @@ explainPostMortem pm = intercalate ", " $ catMaybes
   , if pmProbableThrow     pm then Just "probably threw"        else Nothing
   , if pmReadStorage       pm then Just "read from storage"     else Nothing
   , if pmWroteStorage      pm then Just "wrote to storage"      else Nothing
-  , if pmCheckedOwnBalance pm then Just "checked own balance"   else Nothing
   , if pmMadeExtCall       pm then Just "made an external call" else Nothing
   , if pmSentFunds         pm then Just "sent funds"            else Nothing
   ]
@@ -124,17 +122,17 @@ determineCauseOfDeath report =
     case crResult report of
       Ok _ ->
         case find isReturnData interrupts of
-          Just (VM.ReturnData x) -> Return x
+          Just (VM.CallReturn x) -> Return x
           Nothing                -> Stop
 
       Err (Control.VMError e) ->
         case e of
-          VM.InvalidJump _                 -> InvalidJump
-          VM.InvalidPC _                   -> InvalidPC
-          VM.OutOfGas                      -> OutOfGas
-          VM.NotImplemented (Ty.Invalid _) -> InvalidOp
-          VM.NotImplemented op             -> NotImplemented op
-          _                                -> Other
+          VM.InvalidJump _              -> InvalidJump
+          VM.InvalidPC _                -> InvalidPC
+          VM.OutOfGas                   -> OutOfGas
+          VM.NotImplemented (Invalid _) -> InvalidOp
+          VM.NotImplemented op          -> NotImplemented op
+          _                             -> Other
 
       Err _ -> Other
 
@@ -144,7 +142,7 @@ determineCauseOfDeath report =
 
 isReturnData :: VM.Interrupt -> Bool
 isReturnData int = case int of
-  VM.ReturnData _ -> True
+  VM.CallReturn _ -> True
   _               -> False
 
 isStorageWrite :: VM.Interrupt -> Bool
@@ -162,15 +160,9 @@ isExternalCall int = case int of
   VM.ExternalCall _  -> True
   _                  -> False
 
-isCheckOwnBalance :: Address -> VM.Interrupt -> Bool
-isCheckOwnBalance addr int = case int of
-  VM.CheckBalance x _ -> if (asBytesAddress x) == (asBytesAddress addr) 
-                         then True else False
-  _                   -> False
-
 isSendFunds :: VM.Interrupt -> Bool
 isSendFunds int = case int of
-  VM.ExternalCall (_, _, x, _, _, _) -> if (asUInt x) > 0 then True else False
+  VM.ExternalCall (_, _, x, _, _, _) -> if uint x > 0 then True else False
   _                                  -> False
 
 

@@ -13,13 +13,19 @@ import Control.Monad.Result
 import Control.Monad.Resultant
 import Text.Structured (Structured(fmt), typeset, withLineNumbers, (~-))
 
-import Fluidity.Common.Binary (fromHex)
+import Fluidity.Common.Binary (fromHex, fromBytes, toBytes)
 import Fluidity.EVM.REPL (REPL)
 import Fluidity.EVM.Types
-import qualified Fluidity.EVM.Decode as Decode
+import Fluidity.EVM.Data.Account
+import Fluidity.EVM.Data.Value
+import Fluidity.EVM.Data.ByteField (fromByteString)
+import Fluidity.EVM.Data.Prov (Prov(Env, Ext), Usr(Code))
+import qualified Fluidity.EVM.Data.Bytecode as Bytecode
 import qualified Fluidity.EVM.VM as VM
+import qualified Fluidity.EVM.Data.Import as Import
+import qualified Fluidity.EVM.Data.Snapshot as Snapshot
 import qualified Fluidity.EVM.REPL as REPL
-import qualified Fluidity.EVM.Data as Data
+import qualified Fluidity.EVM.Data.Prov as Prov
 
 
 type EVM = ResultantT IO State Error
@@ -27,18 +33,26 @@ type EVM = ResultantT IO State Error
 data State = State
   deriving (Show)
 
+data REPLOpts = REPLOpts
+  { roSnapshotDir :: FilePath
+  , roMaxChunks   :: Maybe Int
+  , roNoDupes     :: Bool
+  } deriving (Show)
+
 data Error
-  = DecodeError Decode.Error
-  | VMError     VM.Error
-  | REPLError   REPL.Error
-  | UnreadableBalance String String
+  = BytecodeError     Bytecode.Error
+  | VMError           VM.Error
+  | REPLError         REPL.Error
+  | UnreadableBalance String
+  | SnapshotError     Snapshot.RLPError
   deriving (Show)
 
 instance Structured Error where
   fmt e = case e of
-    DecodeError x -> "Error decoding program:" ~- x
-    VMError x     -> "VM halted with error:" ~- x
-    REPLError x   -> "REPL error:" ~- x
+    BytecodeError x -> "Error decoding program:" ~- x
+    VMError x       -> "VM halted with error:" ~- x
+    REPLError x     -> "REPL error:" ~- x
+    SnapshotError x -> "Snapshot error:" ~- show x
 
 
 -- EVM control operations
@@ -50,52 +64,29 @@ run m = snd <$> runResultantT m State
 runProgram :: Program -> EVM ()
 runProgram = error "not implemented" -- fromVM . VM.runProgram
 
---load :: FilePath -> EVM Program
---load x = lift (B.readFile x) >>= decodeHex
-
-decode :: ByteString -> EVM Code
-decode = fromDecode . Decode.decode
-
-decodeHex :: ByteString -> EVM Code
-decodeHex = fromDecode . Decode.decodeHex
-
-repl :: Maybe FilePath -> FilePath -> EVM ()
-repl mdir path = 
+repl :: REPLOpts -> EVM ()
+repl (REPLOpts dir maxChunks noDupes) = 
   let
     loadAndRun :: REPL () -> EVM ()
     loadAndRun ma = do r <- lift $ REPL.runWithSetup ma
                        point $ mapError REPLError r
-  in case mdir of
-    Just dir -> do
-      contracts <- loadFromIndex dir path
-      loadAndRun $ REPL.loadMany contracts
-    Nothing -> do
-      (a,b,c,s) <- load "data" $ FilePath.dropExtension path
-      loadAndRun $ REPL.load a b c s 
 
+    loadSnapshot :: Maybe Int -> EVM AccountDB
+    loadSnapshot n = do
+      r <- lift $ runResultantT Snapshot.loadSnapshot (Snapshot.State dir n noDupes)
+      point . mapError SnapshotError $ snd r
 
--- Loading from filesystem
--- ---------------------------------------------------------------------
+  in do
+    snapshot <- loadSnapshot maxChunks
+    loadAndRun (REPL.fromSnapshot snapshot)
 
-load :: FilePath -> String -> EVM (Address, Balance, Bytecode, Storage)
-load dir name = do
-  let path = FilePath.combine dir name
-  txtBytecode <- lift . readFile $ addExtension path "bin"
-  txtBalance  <- lift . readFile $ addExtension path "balance"
-  balance     <- let s = (readsPrec 0 txtBalance) :: [(Double, String)]
-                 in case s of [(b,"")] -> return . toInteger . floor . fst $ head s
-                              _        -> fail $ UnreadableBalance name txtBalance
-  return 
-    ( Data.mkAddress Data.Snapshot $ fromHex name
-    , Data.mkBalance balance
-    , fromHex txtBytecode
-    , mempty
-    )
-
-loadFromIndex :: FilePath -> FilePath -> EVM ([(Address, Balance, Bytecode, Storage)])
-loadFromIndex dir path = do
-  names <- fmap lines . lift $ readFile path
-  mapM (load dir) names
+importSnapshot :: FilePath -> FilePath -> EVM ()
+importSnapshot src dest = do
+  r <- lift $ runResultantT Import.importSnapshot (Import.State src dest 0)
+  case snd r of 
+    Ok _  -> return ()
+    Err e -> lift . putStrLn . T.pack $ show e
+  return ()
 
 
 -- Formatting and display
@@ -111,8 +102,8 @@ printAsm = lift . putStrLn . typeset
 fromVM :: Result VM.Error a -> EVM a
 fromVM = point . mapError VMError
 
-fromDecode :: Result Decode.Error a -> EVM a
-fromDecode = point . mapError DecodeError
+fromBytecode :: Result Bytecode.Error a -> EVM a
+fromBytecode = point . mapError BytecodeError
 
 readInteger :: String -> Integer
 readInteger = read

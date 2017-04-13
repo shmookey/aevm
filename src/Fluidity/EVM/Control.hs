@@ -15,10 +15,12 @@ import Control.Monad.Execution (Execution, execute, interrupt)
 import Control.Monad.Interruptible ()
 import qualified Control.Monad.Execution as Execution
 
-import Fluidity.EVM.Blockchain (Blockchain, MessageCall(..))
+import Fluidity.EVM.Data.Transaction
+import Fluidity.EVM.Blockchain (Blockchain)
 import Fluidity.EVM.VM (VM)
+import Fluidity.EVM.Data.Format as Format
+import qualified Fluidity.EVM.Analyse.Watchdog as Watchdog
 import qualified Fluidity.EVM.Blockchain as Blockchain
-import qualified Fluidity.EVM.Data as Data
 import qualified Fluidity.EVM.VM as VM
 
 
@@ -32,10 +34,15 @@ data State = State
   , stCallCont      :: Maybe (VM ())
   , stInterruptible :: Bool
   , stAnalyticMode  :: Bool
+  , stMonitoring    :: Bool
   } deriving (Generic)
 
 data Interrupt
-  = VMInterrupt VM.Interrupt
+  = VMInterrupt VM.Interrupt Int
+  | WatchdogEvent Watchdog.Event
+  | CheckpointSaved Int String
+  | CallSucceeded
+  | GenericInterrupt String
   deriving (Show, Generic, NFData)
 
 -- | Current running mode requested from the caller
@@ -86,26 +93,40 @@ breakAt x = setRunMode (Until x) >> resume
 
 -- | Respond to a VM interrupt, updating the call stack with the new VM state
 handleInterrupt :: VM.Interrupt -> VM.State -> Control Bool
-handleInterrupt ev st = do
-  updateVMState st
-  mode <- getRunMode
-  isUninterruptible <- not <$> getInterruptible
-  isAnalyticMode    <- getAnalyticMode
-  if isAnalyticMode
-  then interrupt $ VMInterrupt ev -- Echo interrupt to the controlling monad
-  else return ()
-  case ev of
-    VM.ProgramLoad -> saveCheckpoint "Program Load" >> return True
-    VM.BeginCycle ptr -> case mode of
-      Run     -> return True
-      Step    -> return isUninterruptible
-      Until x -> return $ ptr /= x
-    VM.StorageWrite _ _ -> do
-      if not isAnalyticMode 
-      then interrupt $ VMInterrupt ev
-      else return ()
-      return True
-    _ -> return True
+handleInterrupt ev st = getMonitoring >>= \monitoring ->
+  if not monitoring
+  then return True
+  else do
+    updateVMState st
+    mode <- getRunMode
+
+    let pc = VM.stPC st
+    mapM_ (interrupt . WatchdogEvent) $ (force $ Watchdog.analyse ev pc)
+    
+    isUninterruptible <- not <$> getInterruptible
+    isAnalyticMode    <- getAnalyticMode
+    if isAnalyticMode
+    then interrupt $ VMInterrupt ev pc -- Echo interrupt to the controlling monad
+    else return ()
+
+    case ev of
+      VM.ProgramLoad -> do
+        i <- saveCheckpoint "Program Load"
+        interrupt $ CheckpointSaved i "Program load"
+        return True
+
+      VM.BeginCycle ptr -> case mode of
+        Run     -> return True
+        Step    -> return isUninterruptible
+        Until x -> return $ ptr /= x
+
+      VM.StorageWrite _ _ -> do
+        if not isAnalyticMode 
+        then interrupt $ VMInterrupt ev pc
+        else return ()
+        return True
+
+      _ -> return True
 
 
 -- Call stack
@@ -191,10 +212,10 @@ call msg = do
 
 
   -- Create a fresh context and run the VM
-  let initialState = VM.initState
+  let initialState = VM.initState msg
   pushStackFrame initialState
   (newState, result) <- Execution.executeR
-    (VM.call msg)
+    VM.call
     mutateBlockchain
     handleInterrupt
     initialState
@@ -211,6 +232,7 @@ call msg = do
       fail $ VMError e
 
     Right (Ok _) -> do
+      interrupt CallSucceeded
       popStackFrame             -- Task completed, so remove the VM state from the call stack
       setCallCont Nothing
 
@@ -251,6 +273,7 @@ resume = do
       fail $ VMError e
 
     Right (Ok _) -> do
+      interrupt CallSucceeded
       popStackFrame             -- Task completed, so remove the VM state from the call stack
       setCallCont Nothing
 
@@ -317,6 +340,7 @@ initState = State
   , stCallCont      = Nothing
   , stInterruptible = True
   , stAnalyticMode  = True
+  , stMonitoring    = True
   }
 
 showState :: State -> String
@@ -325,28 +349,29 @@ showState st = case stCallStack st of
   (vm:_) -> 
     let
       call   = VM.stCall vm
-      callee = Data.formatStub $ Blockchain.msgCallee call
-      caller = Data.formatStub $ Blockchain.msgCaller call
+      callee = Format.stub $ msgCallee call
+      caller = Format.stub $ msgCaller call
       depth  = show $ length (stCallStack st)
     in "running "
     ++ "(" ++ depth ++ ") "
     ++ caller ++ " => " ++ callee
 
-getBlockchain       = stBlockchain <$> getState
-getCallStack        = stCallStack <$> getState
-getCheckpoints      = stCheckpoints <$> getState
-getRunMode          = stRunMode <$> getState
-getCallCont         = stCallCont <$> getState
+getBlockchain       = stBlockchain    <$> getState
+getCallStack        = stCallStack     <$> getState
+getCheckpoints      = stCheckpoints   <$> getState
+getRunMode          = stRunMode       <$> getState
+getCallCont         = stCallCont      <$> getState
 getInterruptible    = stInterruptible <$> getState
-getAnalyticMode     = stAnalyticMode <$> getState
+getAnalyticMode     = stAnalyticMode  <$> getState
+getMonitoring       = stMonitoring    <$> getState
 
-setBlockchain x     = updateState $ \st -> st { stBlockchain = x }
-setCallStack x      = updateState $ \st -> st { stCallStack = x }
-setCheckpoints x    = updateState $ \st -> st { stCheckpoints = x }
-setRunMode x        = updateState $ \st -> st { stRunMode = x }
-setCallCont x       = updateState $ \st -> st { stCallCont = x }
-setInterruptible x  = updateState $ \st -> st { stInterruptible = x }
+setBlockchain    x  = updateState (\st -> st { stBlockchain    = x }) :: Control ()
+setCallStack     x  = updateState (\st -> st { stCallStack     = x }) :: Control ()
+setCheckpoints   x  = updateState (\st -> st { stCheckpoints   = x }) :: Control ()
+setRunMode       x  = updateState (\st -> st { stRunMode       = x }) :: Control ()
+setCallCont      x  = updateState (\st -> st { stCallCont      = x }) :: Control ()
+setInterruptible x  = updateState (\st -> st { stInterruptible = x }) :: Control ()
 
-updateCallStack f   = getCallStack >>= setCallStack . f
+updateCallStack   f = getCallStack   >>= setCallStack   . f
 updateCheckpoints f = getCheckpoints >>= setCheckpoints . f
 

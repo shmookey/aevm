@@ -1,4 +1,4 @@
-name:                flevm
+name:                aevm
 version:             0.1.0.0
 -- synopsis:
 -- description:
@@ -16,17 +16,25 @@ extra-source-files:  README.md
 library
   hs-source-dirs:      src
   default-language:    Haskell2010
-  exposed-modules:     Fluidity.Common.Binary
+  exposed-modules:     Fluidity.Common.ANSI
+                     , Fluidity.Common.Binary
                      , Fluidity.Common.Crypto
+                     , Fluidity.Common.RLP
                      , Fluidity.EVM
+                     , Fluidity.EVM.Analyse.Dependency
+                     , Fluidity.EVM.Analyse.Formula
                      , Fluidity.EVM.Analyse.Outcome
-                     , Fluidity.EVM.Blockchain
-                     , Fluidity.EVM.Bytecode
-                     , Fluidity.EVM.Control
-                     , Fluidity.EVM.Data
-                     , Fluidity.EVM.Decode
-                     , Fluidity.EVM.Parallel
-                     , Fluidity.EVM.Provenance
+                     , Fluidity.EVM.Analyse.Watchdog
+                     , Fluidity.EVM.Data.Account
+                     , Fluidity.EVM.Data.Bytecode
+                     , Fluidity.EVM.Data.ByteField
+                     , Fluidity.EVM.Data.Format
+                     , Fluidity.EVM.Data.Import
+                     , Fluidity.EVM.Data.Prov
+                     , Fluidity.EVM.Data.Operations
+                     , Fluidity.EVM.Data.Snapshot
+                     , Fluidity.EVM.Data.Transaction
+                     , Fluidity.EVM.Data.Value
                      , Fluidity.EVM.REPL
                      , Fluidity.EVM.REPL.Chain
                      , Fluidity.EVM.REPL.Command
@@ -34,9 +42,13 @@ library
                      , Fluidity.EVM.REPL.Help
                      , Fluidity.EVM.REPL.Meta
                      , Fluidity.EVM.REPL.Monad
+                     , Fluidity.EVM.REPL.Monitor
                      , Fluidity.EVM.REPL.Parallel
                      , Fluidity.EVM.REPL.Parser
                      , Fluidity.EVM.REPL.State
+                     , Fluidity.EVM.Blockchain
+                     , Fluidity.EVM.Control
+                     , Fluidity.EVM.Parallel
                      , Fluidity.EVM.Text
                      , Fluidity.EVM.Types
                      , Fluidity.EVM.VM
@@ -49,6 +61,7 @@ library
                      , Control.Monad.Resultant
                      , Text.Structured
   build-depends:       base >= 4.7 && < 5
+                     , ansi-terminal
                      , array
                      , bits-bytestring
                      , base16-bytestring
@@ -62,18 +75,19 @@ library
                      , monad-loops
                      , parallel
                      , parsec
+                     , snappy
                      , split
                      , strict
                      , text
                      , time
 
-executable flevm
+executable aevm
   hs-source-dirs:      app
   main-is:             Main.hs
   default-language:    Haskell2010
   ghc-options:         -threaded -rtsopts -with-rtsopts=-N
   build-depends:       base >= 4.7 && < 5
-                     , flevm
+                     , aevm
                      , optparse-applicative
                      , text
 
@@ -91,6 +105,7 @@ executable confound
   build-depends:       base >= 4.7 && < 5
                      , array
                      , base16-bytestring
+                     , bits-bytestring
                      , bytestring
                      , containers
                      , cryptonite
@@ -109,7 +124,7 @@ test-suite execution
   main-is:             Spec.hs
   default-language:    Haskell2010
   build-depends:       base >= 4.7 && < 5
-                     , flevm
+                     , aevm
   other-modules:       Test.Control.Monad.ExecutionSpec
 
 

@@ -8,6 +8,7 @@ import Data.Text (Text)
 import Data.Char (toUpper)
 import Data.ByteString (ByteString)
 import Text.Printf (printf)
+import System.Console.ANSI
 import qualified Data.Map as Map
 
 import qualified Data.Text as T
@@ -16,41 +17,52 @@ import qualified Data.ByteString.Char8 as B8
 import qualified Data.ByteString.Base16 as B16
 
 import Text.Structured
+import qualified Text.Structured as TS
 
-import Fluidity.Common.Binary (padBytes, toHex) 
-import Fluidity.EVM.Data (Value, ByteField
-  , asBytesWord, asBytesMin
-  , formatAddress, formatUInt, formatStub
-  , fieldToByteString )
+import Fluidity.Common.ANSI
+import Fluidity.Common.Binary
+import Fluidity.EVM.Data.ByteField
+import Fluidity.EVM.Data.Format
+import Fluidity.EVM.Data.Transaction
+import Fluidity.EVM.Data.Value
 import Fluidity.EVM.Types
 import Fluidity.EVM.VM (VM)
-import Fluidity.EVM.Blockchain (MessageCall(..))
-import qualified Fluidity.EVM.Data as Data
+import Fluidity.EVM.Data.Account
+import Fluidity.EVM.Data.Bytecode
+import Fluidity.EVM.Blockchain
 import qualified Fluidity.EVM.VM as VM
-
 
 instance Structured MessageCall where
   fmt (MessageCall caller callee value gas bytes) = 
-    "CALL" ~- "[" ~~ formatStub caller ~~ "]" 
-   ~- "=>" ~- "[" ~~ formatStub callee ~~ "]"
-   ~- formatUInt value ~- formatUInt gas ~- fieldToByteString bytes
+   Call ~- "[" ~~ stubAddress caller ~~ "]" 
+   ~- "=>" ~- "[" ~~ stubAddress callee ~~ "]"
+   ~- currency value ~- uint gas ~- toHexS bytes
 
-formatStorage :: Storage -> String
-formatStorage = Prelude.unlines . map f . Map.toList 
-  where f (k,v) = formatStub k ++ " " 
-               ++ toHex (asBytesWord v) ++ " " 
-               ++ formatUInt v
+instance Structured VM.Interrupt where
+  fmt int = case int of 
+    VM.ConditionalJump c p -> JumpI ~- boolean c ~- toHexShort p
+    VM.JumpTo p            -> Jump ~- toHexShort p
+    VM.Emit bf v           -> let op = case length v of 0 -> Log0
+                                                        1 -> Log1
+                                                        2 -> Log2
+                                                        3 -> Log3
+                                                        4 -> Log4
+                              in op ~- abbreviated (toBytes bf) ~-  phrase (map smart v)
+    VM.Stopped             -> fmt Stop
+    _                      -> fmt $ show int
+
+formatStorage :: StorageDB -> String
+formatStorage = Prelude.unlines . map (f . snd) . Map.toList 
+  where f (k,v) = stub k ++ " " 
+               ++ toHexS v ++ " " 
+               ++ show (uint v)
 
 formatExternalCall :: ExtCall -> String
-formatExternalCall (gas, addr, balance, cdata, mptr, retsz) =
-  T.unpack . typeset $ "CALL" 
-    ~- formatStub addr ~- formatUInt balance ~- formatUInt gas ~- fieldToByteString cdata ~- formatUInt retsz
+formatExternalCall (gas, addr, balance, cdata, mptr, retsz) = T.unpack .
+  typeset $ Call ~- stubAddress addr ~- currency balance ~- uint gas ~- toHexS cdata ~- uint retsz
 
 instance Structured Op where
-  fmt op = case op of
-    Label x     -> x ~~ ":"
-    Comment x   -> "--" ~- x
-    PushLabel x -> "PUSH [" ~~ x ~~ "]"
+  fmt op = colour Yellow $ case op of
     Push1  x    -> "PUSH1"  ~- x
     Push2  x    -> "PUSH2"  ~- x
     Push3  x    -> "PUSH3"  ~- x
@@ -83,8 +95,7 @@ instance Structured Op where
     Push30 x    -> "PUSH30" ~- x
     Push31 x    -> "PUSH31" ~- x
     Push32 x    -> "PUSH32" ~- x
-    CData x     -> Empty
-    x           -> fmt . map toUpper $ show x
+    x           -> fmt . TS.padRight 6 . map toUpper $ show x
 
 instance Structured VM.Error where
   fmt e = case e of
@@ -95,23 +106,12 @@ instance Structured VM.Error where
     _                      -> "Error: " ~- show e
 
 instance Structured Integer where
-  fmt x = if x >= 0 
-          then "0x" ~~ (T.pack $ printf "%064x" x)
-          else "-0x" ~~ (T.pack $ printf "%064x" (abs x))
+  fmt = fmt . show
 
 instance Structured Program where
   fmt (Program xs) = block . map inst $ zip [0..] xs
     where inst :: (Int, Op) -> Fragment
-          inst (i, Label x) = (hexdigits 4 i) ~- x ~~ ":"
-          inst (_, CData _) = Empty
           inst (i, x)       = (hexdigits 4 i) ~- "  " ~~ x 
-
-instance Structured SourceMap where
-  fmt (SourceMap (Program xs) ys) = block . map inst $ zip ys xs
-    where inst :: (Int, Op) -> Fragment
-          inst (i, Label x) = (hexdigits 4 i) ~- x ~~ ":"
-          inst (_, CData _) = Empty
-          inst (i, x)       = (hexdigits 4 i) ~- "  " ~~ x
 
 instance Structured ByteString where
   fmt = fmt . (++) "0x" . B8.unpack . B16.encode . padBytes 1

@@ -3,15 +3,23 @@ module Fluidity.EVM.REPL.Parser where
 import Control.Monad (void)
 import Control.Applicative ((<|>), (<*))
 import Data.ByteString.Char8 (ByteString)
+import Data.List (intercalate)
 import Data.Functor.Identity (Identity)
+import Data.Semigroup ((<>))
 import Text.Parsec ((<?>))
 import qualified Text.Parsec.Char as PC
 import qualified Text.Parsec as P
 
 import Control.Monad.Result
 
-import Fluidity.Common.Binary (fromHex, fromHexOnly)
+import Confound.Methods (methodHash')
+import Fluidity.Common.Binary (fromHex, fromHexOnly, unroll, padBytes, toBytes)
+import Fluidity.EVM.Data.ByteField (ByteField, fromByteString)
+import Fluidity.EVM.Data.Value
+import Fluidity.EVM.Data.Prov (Prov(Usr))
 import Fluidity.EVM.REPL.Command
+import qualified Fluidity.EVM.Data.Prov as Prov
+import qualified Fluidity.EVM.Data.ByteField as BF
 
 
 type Parse a = P.Parsec TokenStream () a
@@ -39,8 +47,9 @@ command = P.choice
   [ Chain    <$> cmdChain
   , EVM      <$> cmdEVM
   , Meta     <$> cmdMeta
-  , State    <$> cmdState
+  , Monitor  <$> cmdMonitor
   , Parallel <$> cmdPar
+  , State    <$> cmdState
   ] <* P.eof
 
 
@@ -74,55 +83,17 @@ cmdEVM =
            space
            x <- litInt
            return $ BreakAt x
-      , cmdCall
+      , do keyword "call"
+           space
+           addr  <- address
+           space
+           val   <- callValue
+           gas   <- P.option defaultGas (space >> callGas)
+           cdata <- P.option defaultCallData (space >> callData)
+           return $ Call addr val gas cdata
+
       , Inspect <$> cmdInspect
       ]
-
-
--- Message calls
--- ---------------------------------------------------------------------
-
-cmdCall :: Parse EVM
-cmdCall = do
-  keyword "call"
-  space
-  addr  <- address
-  space
-  val   <- litInt
-  gas   <- P.optionMaybe (space >> litInt)
-  cdata <- P.optionMaybe (space >> callData)
-  return $ Call addr val gas cdata
-
-callData :: Parse CallData
-callData = P.choice
-  [ do bs <- P.try hex
-       return $ RawCall bs
-  , do name <- word
-       optionalSpace
-       openParen
-       optionalSpace
-       args <- P.sepBy methodArg commaSpace
-       optionalSpace
-       closeParen
-       return $ MethodCall name args
-  ]
-
-methodArg :: Parse MethodArg
-methodArg = P.choice $ map P.try
-  [ do t <- word
-       space
-       x <- litInt
-       return $ NumArg x t
-  , do keyword "bool"
-       space
-       val <- (const True <$> keyword "true")
-          <|> (const False <$> keyword "false")
-       return $ BoolArg val
-  , do keyword "address"
-       space
-       bs <- hex
-       return $ AddrArg bs 
-  ]
 
 
 -- Parallel commands
@@ -137,9 +108,9 @@ cmdPar = do
          space
          ref   <- setRef
          space
-         val   <- litInt
-         gas   <- P.optionMaybe $ P.try (space >> litInt)
-         cdata <- P.optionMaybe $ P.try (space >> callData)
+         val   <- callValue
+         gas   <- P.option defaultGas $ P.try (space >> callGas)
+         cdata <- P.option defaultCallData $ P.try (space >> callData)
          post  <- P.optionMaybe $ space >> postProcess
          return $ ParCall ref val gas cdata post
     , do keyword "set"
@@ -273,6 +244,102 @@ cmdMeta = do
     ]
 
 
+-- Monitor commands
+-- ---------------------------------------------------------------------
+
+cmdMonitor :: Parse Monitor
+cmdMonitor = do
+  keyword "mon"
+  space
+  P.choice
+    [ const MonOn  <$> keyword "on"
+    , const MonOff <$> keyword "off"
+    ]
+
+
+-- Message calls
+-- ---------------------------------------------------------------------
+
+callData :: Parse ByteField
+callData = encodeCallData <$> P.choice
+  [ do bs <- P.try hex
+       return $ RawCall bs
+  , do name <- word
+       optionalSpace
+       openParen
+       optionalSpace
+       args <- P.sepBy methodArg commaSpace
+       optionalSpace
+       closeParen
+       return $ MethodCall name args
+  ]
+
+defaultCallData :: ByteField
+defaultCallData = BF.empty $ Usr Prov.CallData mempty
+
+defaultGas :: Value
+defaultGas = value g . Usr Prov.CallGas $ toBytes g
+  where g = 1000
+
+callValue :: Parse Value
+callValue = do
+  x <- currencyAmount
+  return . value x . Usr Prov.CallValue $ toBytes x
+
+callGas :: Parse Value
+callGas = do
+  x <- litInt
+  return . value x . Usr Prov.CallGas $ toBytes x
+
+methodArg :: Parse MethodArg
+methodArg = P.choice $ map P.try
+  [ do t <- word
+       space
+       x <- litInt
+       return $ NumArg x t
+  , do keyword "bool"
+       space
+       val <- (const True <$> keyword "true")
+          <|> (const False <$> keyword "false")
+       return $ BoolArg val
+  , do keyword "address"
+       space
+       bs <- hex
+       return $ AddrArg bs 
+  ]
+
+encodeCallData :: CallData -> ByteField
+encodeCallData cd =
+  let
+    encodeMethod :: String -> [MethodArg] -> ByteString
+    encodeMethod name args =
+      let
+        argsStr = intercalate "," $ map argType args
+        sig     = name ++ "(" ++ argsStr ++ ")"
+      in
+        methodHash' sig <> mconcat (map argVal args)
+
+    argVal :: MethodArg -> ByteString
+    argVal arg = case arg of
+      NumArg v _    -> padBytes 32 $ unroll v
+      BoolArg True  -> padBytes 32 $ unroll (1 :: Int)
+      BoolArg False -> padBytes 32 $ unroll (0 :: Int)
+      AddrArg addr  -> padBytes 32 addr
+
+    argType :: MethodArg -> String
+    argType arg = case arg of
+      NumArg _ t -> t
+      BoolArg _  -> "bool"
+      AddrArg _  -> "address"
+    
+    calldata :: ByteString
+    calldata = case cd of
+      RawCall bs        -> bs
+      MethodCall x args -> encodeMethod x args
+  in
+    fromByteString (Usr Prov.CallData calldata) calldata
+
+
 -- Specifiers
 -- ---------------------------------------------------------------------
 
@@ -284,6 +351,9 @@ codeRef = do
   case (addr, sect) of
     (Nothing, Nothing) -> fail "coderef"
     _                  -> return (addr, sect)
+
+currencyAmount :: Parse Integer
+currencyAmount = litInt -- TODO: units
 
 address :: Parse Address
 address = P.choice . map P.try $
