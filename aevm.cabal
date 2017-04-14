@@ -59,6 +59,7 @@ library
                      , Control.Monad.Execution
                      , Control.Monad.Result
                      , Control.Monad.Resultant
+                     , Control.Monad.Resultant.IO
                      , Text.Structured
   build-depends:       base >= 4.7 && < 5
                      , ansi-terminal

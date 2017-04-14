@@ -5,19 +5,6 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module Control.Monad.Resultant where
---  ( Resultant
---  , ResultantT(ResultantT)
---  , runResultantT
---  , ResultantMonad
---    (point, fail, fromEither, fromMaybe, mapEither, updateError
---    , recover, recoverWith )
---  , lift
---  , runResultant
---  , getState
---  , setState
---  , withState
---  , updateState
---  ) where
 
 import Prelude hiding (fail)
 import Data.Functor.Identity (Identity(runIdentity))
@@ -32,48 +19,6 @@ type Resultant st e = ResultantT Identity st e
 
 runResultant :: Resultant st e a -> st -> (st, Result e a)
 runResultant m st = runIdentity $ runResultantT m st
-
-
--- ResultantMonad
--- ---------------------------------------------------------------------
-
---class Monad m => ResultantMonad m e where
---  point   :: Result e a -> m a
---  reflect :: m a -> m (Result e a)
---  runM    :: m a -> st -> (st, Result e a)
---
---  fail :: e -> m a
---  fail = point . Err
---
---  fromEither :: Either e a -> m a
---  fromEither (Right x)  = return x
---  fromEither (Left err) = fail err
---
---  fromMaybe :: e -> Maybe a -> m a
---  fromMaybe _ (Just x) = return x
---  fromMaybe err _      = fail err
---
---  mapEither :: (e' -> e) -> Either e' a -> m a
---  mapEither _ (Right x)  = return x
---  mapEither f (Left err) = fail $ f err
---
---  updateError :: (e -> e) -> m a -> m a
---  updateError f m = reflect m >>= point . mapError f 
---
---  recover :: (e -> a) -> m a -> m a
---  recover f m = reflect m >>= \r -> case r of
---    Ok x  -> return x
---    Err e -> return $ f e
---
---  recoverWith :: (e -> m a) -> m a -> m a
---  recoverWith f m = reflect m >>= \r -> case r of
---    Ok x  -> return x
---    Err e -> f e
---
---instance ResultantMonad (Result e) e where
---  point   = id 
---  reflect = return
---  fail s = Err s
 
 
 -- ResultantT
@@ -98,41 +43,13 @@ instance Monad m => Monad (ResultantT m st e) where
                                     case rb of Ok mb -> runResultantT mb st'
                                                Err e -> return (st', Err e)
 
---instance Monad m => ResultantMonad (ResultantT m st e) e where
---  point x = ResultantT $ \st -> return (st, x)
---  reflect m = ResultantT $ \st -> do
---    (st', r) <- runResultantT m st
---    return (st', return r)
+instance Monad i => Rise ResultantT i s e where
+  rrun = runResultantT
+  rcon = ResultantT
+
 
 -- Utility functions
 -- ---------------------------------------------------------------------
-
-
--- | Return the current state
---getState :: Monad m => ResultantT m st e st
---getState = ResultantT $ \st -> return (st, return st)
---
----- | Replace the current state with the given value
---setState :: Monad m => st -> ResultantT m st e ()
---setState x = ResultantT $ \_ -> return (x, return ())
---
----- | Run a computation with the given state, discarding the resulting state.
---withState :: Monad m => st -> ResultantT m st e a -> ResultantT m st e a
---withState localState x = 
---  ResultantT $ \st -> do (_, r) <- runResultantT x localState
---                         return (st, r)
---
----- | Transform the current state with the provided function
---updateState :: Monad m => (st -> st) -> ResultantT m st e ()
---updateState f = getState >>= setState . f
-
--- | Lift a value from the underlying monad into the Resultant
---lift :: Monad m => m a -> ResultantT m st e a
---lift m =
---  let toResult st x = (st, return x)
---  in ResultantT $ \st -> toResult st <$> m
-
------------------------
 
 
 class (Monad (r i s e), Monad i) => Rise (r :: (* -> *) -> * -> * -> * -> *) i s e where
@@ -189,17 +106,21 @@ class (Monad (r i s e), Monad i) => Rise (r :: (* -> *) -> * -> * -> * -> *) i s
   fromEither :: Either e a -> r i s e a
   fromEither = \case { Left l -> fail l ; Right r -> return r }
 
+  fromEitherWith :: (e' -> e) -> Either e' a -> r i s e a
+  fromEitherWith f = \case { Left l -> fail $ f l ; Right r -> return r }
+
+  fromEitherUsing :: (e' -> r i s e e) -> Either e' a -> r i s e a
+  fromEitherUsing f = \case { Left l -> f l >>= fail ; Right r -> return r }
 
 
---safeIO :: Rise r IO s e => IO a -> r IO s e a
---safeIO m = 
---  let r = (toResult <$> try m) :: IO (Result SomeException _)
---  in rJoin $ fmap (rPoint . mapError convertException) r
---instance Rise Result e where
---  rrun ma st = return (st, ma)
---  rcon f = snd . runIdentity $ f ()
+class SubError e e' where
+  suberror :: e' -> e
 
-instance Monad i => Rise ResultantT i s e where
-  rrun = runResultantT
-  rcon = ResultantT
+
+runIn :: (Rise r1 i1 s1 e1, Rise r2 i2 s2 e2, SubError e1 e2) => r2 i2 s2 e2 a -> s2 -> i2 (r1 i1 s1 e1 a)
+runIn ma st = do
+  result <- snd <$> rrun ma st
+  return . point $ mapError suberror result
+
+
 

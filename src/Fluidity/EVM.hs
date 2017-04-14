@@ -31,26 +31,27 @@ import qualified Fluidity.EVM.Data.Prov as Prov
 type EVM = ResultantT IO State Error
 
 data State = State
-  deriving (Show)
+  { roDataDir :: FilePath
+  }
 
 data REPLOpts = REPLOpts
-  { roSnapshotDir :: FilePath
-  , roMaxChunks   :: Maybe Int
+  { roMaxChunks   :: Maybe Int
   , roNoDupes     :: Bool
-  } deriving (Show)
+  , rSnapshot     :: String
+  }
+
+data ImportOpts = ImportOpts
+  { ioSaveAs :: String
+  , ioSrcDir :: FilePath
+  }
 
 data Error
-  = BytecodeError     Bytecode.Error
-  | VMError           VM.Error
-  | REPLError         REPL.Error
-  | UnreadableBalance String
+  = REPLError         REPL.Error
   | SnapshotError     Snapshot.RLPError
   deriving (Show)
 
 instance Structured Error where
   fmt e = case e of
-    BytecodeError x -> "Error decoding program:" ~- x
-    VMError x       -> "VM halted with error:" ~- x
     REPLError x     -> "REPL error:" ~- x
     SnapshotError x -> "Snapshot error:" ~- show x
 
@@ -58,53 +59,43 @@ instance Structured Error where
 -- EVM control operations
 -- ---------------------------------------------------------------------
 
-run :: EVM a -> IO (Result Error a)
-run m = snd <$> runResultantT m State
-
-runProgram :: Program -> EVM ()
-runProgram = error "not implemented" -- fromVM . VM.runProgram
-
 repl :: REPLOpts -> EVM ()
-repl (REPLOpts dir maxChunks noDupes) = 
-  let
-    loadAndRun :: REPL () -> EVM ()
-    loadAndRun ma = do r <- lift $ REPL.runWithSetup ma
-                       point $ mapError REPLError r
+repl (REPLOpts chunks dupes name) = do
+  dataDir  <- getDataDir
+  snapshot <- loadSnapshot maxChunks
+  snapshot <- runSnapshot
+    . Snapshot.loadSnapshot name chunks dupes
+    $ Snapshot.State dataDir
+  runREPL $ REPL.fromSnapshot snapshot
 
-    loadSnapshot :: Maybe Int -> EVM AccountDB
-    loadSnapshot n = do
-      r <- lift $ runResultantT Snapshot.loadSnapshot (Snapshot.State dir n noDupes)
-      point . mapError SnapshotError $ snd r
+importSnapshot :: ImportOpts -> EVM ()
+importSnapshot (ImportOpts name src) = do
+  dataDir <- getDataDir
+  runSnapshot . Import.importSnapshot $ Import.State
+    { Import.stDataDir       = dir
+    , Import.stSrcDir        = src
+    , Import.stTargetName    = name
+    , Import.stMatchFailures = 0
+    }
 
-  in do
-    snapshot <- loadSnapshot maxChunks
-    loadAndRun (REPL.fromSnapshot snapshot)
-
-importSnapshot :: FilePath -> FilePath -> EVM ()
-importSnapshot src dest = do
-  r <- lift $ runResultantT Import.importSnapshot (Import.State src dest 0)
-  case snd r of 
-    Ok _  -> return ()
-    Err e -> lift . putStrLn . T.pack $ show e
-  return ()
-
-
--- Formatting and display
+-- Runnng things in other monads
 -- ---------------------------------------------------------------------
 
-printAsm :: Program -> EVM ()
-printAsm = lift . putStrLn . typeset
+runSnapshot :: Snapshot a -> Snapshot.State -> EVM a
+runSnapshot ma st =
+   (lift $ runResultantT ma st) >>= point . mapError SnapshotError . snd
+
+runImport :: Import a -> Import.State -> EVM a
+runImport ma st =
+   (lift $ runResultantT ma st) >>= point . mapError ImportError . snd
+
+runREPL :: REPL a -> REPL.State -> EVM a
+runREPL ma st =
+   (lift $ runResultantT ma st) >>= point . mapError REPLError . snd
 
 
--- Submodule monad adapters
+-- Monad access
 -- ---------------------------------------------------------------------
 
-fromVM :: Result VM.Error a -> EVM a
-fromVM = point . mapError VMError
-
-fromBytecode :: Result Bytecode.Error a -> EVM a
-fromBytecode = point . mapError BytecodeError
-
-readInteger :: String -> Integer
-readInteger = read
+getDataDir = stDataDir <$> getState
 

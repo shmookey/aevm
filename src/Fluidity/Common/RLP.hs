@@ -1,6 +1,9 @@
+{-# LANGUAGE DeriveGeneric, DeriveAnyClass #-}
 module Fluidity.Common.RLP where
 
 import Prelude hiding (fail)
+import Control.DeepSeq
+import GHC.Generics (Generic)
 import Control.Monad.Loops (whileM)
 import Data.List (intercalate)
 import Data.ByteString (ByteString)
@@ -16,8 +19,8 @@ import Fluidity.Common.Binary (roll, unroll, toHex)
 
 data RStruct = RItem ByteString | RList [RStruct]
 
-data RLPError = NotEnoughBytes Int | EndOfInput Int | StructuralError
-  deriving (Show)
+data Error = NotEnoughBytes Int | EndOfInput Int | StructuralError
+  deriving (Show, Generic, NFData)
 
 instance Show RStruct where
   show (RItem bs) = "0x" ++ toHex bs
@@ -25,11 +28,27 @@ instance Show RStruct where
 
 class RLP a where
   toRLP   :: a -> RStruct
-  fromRLP :: RStruct -> Result RLPError a
+  fromRLP :: RStruct -> Result Error a
+
+  encodeRLP :: a -> ByteString
+  encodeRLP = encode . toRLP
+
+  decodeRLP :: ByteString -> Result Error a
+  decodeRLP bs = decode bs >>= fromRLP
 
 instance RLP RStruct where
   toRLP   = id
   fromRLP = return
+
+instance RLP ByteString where
+  toRLP = RItem
+  fromRLP obj = case obj of
+    RItem bs -> Ok bs
+    _        -> Err StructuralError
+
+instance RLP Integer where
+  toRLP x = if x == 0 then toRLP (B.singleton 0) else toRLP $ unroll x
+  fromRLP obj = roll <$> fromRLP obj
 
 instance RLP a => RLP [a] where
   toRLP       = RList . map toRLP
@@ -37,11 +56,23 @@ instance RLP a => RLP [a] where
     RList xs -> mapM fromRLP xs
     _        -> Err StructuralError
 
-instance RLP ByteString where
-  toRLP = RItem
+instance (RLP a, RLP b) => RLP (a, b) where
+  toRLP (x, y) = toRLP [toRLP x, toRLP y]
   fromRLP obj = case obj of
-    RItem bs -> Ok bs
-    _        -> Err StructuralError
+    RList [ma, mb] -> do x <- fromRLP ma
+                         y <- fromRLP mb
+                         return (x, y)
+    _ -> Err StructuralError
+
+instance (RLP a, RLP b, RLP c) => RLP (a, b, c) where
+  toRLP (x, y, z) = toRLP [toRLP x, toRLP y, toRLP z]
+  fromRLP obj = case obj of
+    RList [ma, mb, mc] -> do x <- fromRLP ma
+                             y <- fromRLP mb 
+                             z <- fromRLP mc
+                             return (x, y, z)
+    _ -> Err StructuralError
+
 
 
 -- Encoder
@@ -72,9 +103,9 @@ encode obj = case toRLP obj of
 -- Decoder
 -- ---------------------------------------------------------------------
 
-type Decode = Resultant (Int, ByteString) RLPError
+type Decode = Resultant (Int, ByteString) Error
 
-decode :: ByteString -> Result RLPError RStruct
+decode :: ByteString -> Result Error RStruct
 decode bs = snd $ runResultant struct (0,bs)
 
 struct :: Decode RStruct

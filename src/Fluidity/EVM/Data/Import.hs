@@ -25,10 +25,15 @@ import qualified Fluidity.EVM.Data.Snapshot as Snapshot
 
 type Import = ResultantT IO State RLPError
 
+initState :: FilePath -> State
+initState dir = State
+  { stDataDir       = dir
+  , stMatchFailures = 0
+  }
+
 data State = State
-  { stSrcDir            :: FilePath
-  , stDstDir            :: FilePath
-  , stAddrMatchFailures :: Int 
+  { stDataDir       :: FilePath
+  , stMatchFailures :: Int 
   }
 
 -- | Pure version, for parallel processing of state chunks
@@ -51,8 +56,19 @@ data RichAccount = RichAccount
   , raBalance  :: Integer
   , raCodeFlag :: Integer
   , raCode     :: ByteString
-  , raStorage  :: StorageState
+  , raStorage  :: [(ByteString, ByteString)]
   }
+
+instance RLP Manifest where
+  toRLP = error "can't encode"
+  fromRLP obj = case obj of
+    RList [v, shs, bhs, sr, bn, bh] ->
+      Manifest <$> fromRLP v
+               <*> fromRLP shs
+               <*> fromRLP bhs
+               <*> fromRLP sr
+               <*> fromRLP bn
+               <*> fromRLP bh
 
 -- Intermediate data types: partially processed chunk data
 
