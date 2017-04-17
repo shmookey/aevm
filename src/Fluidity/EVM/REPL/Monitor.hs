@@ -4,6 +4,7 @@ import Prelude hiding (putStrLn)
 import Data.Map as Map
 
 import Text.Structured (Structured(fmt), (~-), (~~))
+import Control.Monad.Resultant.IO
 
 import Fluidity.EVM.REPL.Monad
 import qualified Fluidity.EVM.Control as Control

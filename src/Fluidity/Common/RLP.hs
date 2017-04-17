@@ -73,6 +73,11 @@ instance (RLP a, RLP b, RLP c) => RLP (a, b, c) where
                              return (x, y, z)
     _ -> Err StructuralError
 
+empty :: RStruct
+empty = RList []
+
+blank :: RStruct
+blank = RItem mempty
 
 
 -- Encoder

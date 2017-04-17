@@ -6,6 +6,7 @@ module Control.Monad.Resultant.IO where
 
 import Prelude hiding (fail, putStr, putStrLn, readFile, writeFile)
 import Control.Exception (SomeException)
+import Control.Monad.IO.Class
 import System.IO (hFlush, stdout)
 import qualified Control.Exception as E
 import qualified Prelude as P
@@ -24,17 +25,16 @@ class Rise r i s e => RiseIO r i s e where
   safely :: IO a -> r i s e a
   safely ma = try ma >>= fromEitherUsing except
 
+-- | Why have this, when we already have SubError? To save an import of SomeException, that's all.
 class Exceptional e where
   fromException :: SomeException -> e
 
--- | Why have this, when we already have SubError? To save an import of SomeException, that's all.
-instance Exceptional e => RiseIO ResultantT IO s e where
-  io     = lift 
+instance (MonadIO m, Exceptional e) => RiseIO ResultantT m s e where
+  io = lift . liftIO
   except = return . fromException
 
-
 putStr :: RiseIO r i s e => String -> r i s e ()
-putStr x = safely (P.putStrLn x) >> safely (hFlush stdout)
+putStr x = safely (P.putStr x) >> safely (hFlush stdout)
 
 putStrLn :: RiseIO r i s e => String -> r i s e ()
 putStrLn = safely . P.putStrLn

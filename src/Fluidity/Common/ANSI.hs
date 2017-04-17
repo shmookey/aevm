@@ -19,3 +19,12 @@ colour c x = setSGRCode [SetColor Foreground Dull c] ~~ x ~~ endHighlight
 embolden :: Structured a => a -> TS.Fragment
 embolden x = setSGRCode [SetConsoleIntensity BoldIntensity] ~~ x ~~ setSGRCode [SetConsoleIntensity NormalIntensity]
 
+-- black red green yellow blue magenta cyan white
+
+
+colouringWheel :: [String -> String]
+colouringWheel = cycle $ map ((.) TS.toString)
+  [ f c | c <- [Green, Yellow, Red, Blue, Magenta, Cyan]
+        , f <- [colour, highlight]
+  ]
+

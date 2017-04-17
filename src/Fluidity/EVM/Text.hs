@@ -47,12 +47,12 @@ instance Structured VM.Interrupt where
                                                         2 -> Log2
                                                         3 -> Log3
                                                         4 -> Log4
-                              in op ~- abbreviated (toBytes bf) ~-  phrase (map smart v)
+                              in op ~- abbreviated 12 (toBytes bf) ~-  phrase (map smart v)
     VM.Stopped             -> fmt Stop
     _                      -> fmt $ show int
 
 formatStorage :: StorageDB -> String
-formatStorage = Prelude.unlines . map (f . snd) . Map.toList 
+formatStorage = Prelude.unlines . map f . storageEntriesDB
   where f (k,v) = stub k ++ " " 
                ++ toHexS v ++ " " 
                ++ show (uint v)

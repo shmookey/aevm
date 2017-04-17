@@ -3,15 +3,17 @@
 module Fluidity.EVM.VM where
 
 import Prelude hiding (LT, GT, Value, fail, div, mod, exp, and, or)
-import Data.Map (Map)
-import Data.ByteString (ByteString)
-import qualified Data.Map as Map
-import qualified Data.ByteString as B
-import Control.Monad (when, void)
-import Control.Monad.Loops (whileM_)
 import GHC.Generics (Generic)
 import Control.DeepSeq
+import Data.Function (on)
+import Data.Map (Map)
+import Data.ByteString (ByteString)
+import Control.Monad (when, void)
+import Control.Monad.Loops (whileM_)
+import qualified Data.Map as Map
+import qualified Data.ByteString as B
 
+import Control.Monad.Combinator
 import Control.Monad.Result
 import Control.Monad.Resultant
 import Control.Monad.Execution
@@ -19,16 +21,15 @@ import Control.Monad.Execution
 import Fluidity.Common.Binary (roll, toBytes)
 import Fluidity.EVM.Data.Bytecode (Op(..))
 import Fluidity.EVM.Types hiding (Op(..))
-import Fluidity.EVM.Blockchain (Blockchain)
+import Fluidity.EVM.Blockchain (Blockchain, storageAt, setStorageAt)
 import Fluidity.EVM.Data.ByteField hiding (size)
 import Fluidity.EVM.Data.Operations
 import Fluidity.EVM.Data.Prov (Prov(Sys, Nul), Sys(GasLeft))
 import Fluidity.EVM.Data.Transaction
 import Fluidity.EVM.Data.Value
-import Fluidity.EVM.Blockchain (getStorageAt, setStorageAt)
 import qualified Fluidity.EVM.Data.ByteField as BF
 import qualified Fluidity.EVM.Data.Bytecode as Bytecode
-import qualified Fluidity.EVM.Blockchain as Blockchain
+import qualified Fluidity.EVM.Blockchain as Chain
 
 
 -- Public exports
@@ -48,6 +49,7 @@ data State = State
 
 data Interrupt 
   = BeginCycle Int
+  | NextCycle Int
   | StorageRead Value Value
   | StorageWrite Value Value
   | Emit ByteField [Value]
@@ -86,13 +88,15 @@ call :: VM ()
 call = do
   assertStatus Idle
 
-  addr <- callee
-  callGas >>= setGas . uint
-  callValue >>= env . flip Blockchain.creditAccount addr
-  code <- env (Blockchain.getCode addr)
-  when (BF.size code == 0) $ fail EmptyCode
-  setCode code
+  addr       <- bytes <$> callee
+  callGas   >>= setGas . uint
+  callValue >>= env . Chain.credit addr
+  code       <- env $ Chain.code addr
 
+  when (BF.null code) $ 
+    fail EmptyCode
+
+  setCode code
   setStatus Running
   interrupt ProgramLoad
   whileM_ isRunning step
@@ -111,11 +115,11 @@ resume = do
 -- | Process the current instruction and increment the program counter
 step :: VM ()
 step = do
-  getPC  -- >>= interrupt . BeginCycle
   (sz, op) <- nextOp
   chargeGas
   perform op
   updatePC (+sz)
+  getPC  >>= interrupt . NextCycle
 
 -- | Is the VM in a running state?
 isRunning :: VM Bool
@@ -169,23 +173,23 @@ perform op = case op of
   -- SHA3
   SHA3         -> pop2 >>= \(p, n) -> getMemory >>= push . sha3 p n
   -- Environmental information
-  Balance      -> pop >>= env . Blockchain.lookupBalance >>= push
+  Balance      -> popb >>= env . Chain.balance >>= push
   CallDataSize -> callData >>= push . size
   CallDataLoad -> popi >>= \p -> callData >>= push . getWord p
   CallDataCopy -> pop3i >>= \(p, q, n) -> callData >>= \d -> getMemory >>= setMemory . copy q p n d
   CodeCopy     -> pop3i >>= \(p, q, n) -> getCode >>= \d -> getMemory >>= setMemory . copy q p n d
-  ExtCodeSize  -> pop >>= env . Blockchain.lookupCode >>= push . size
+  ExtCodeSize  -> popb >>= env . Chain.code >>= push . size
   Caller       -> caller    >>= push
   CallValue    -> callValue >>= push
   Origin       -> caller    >>= push
   Address      -> callee    >>= push
   -- Block information
-  BlockHash    -> env Blockchain.currentBlockHash       >>= push
-  Number       -> env Blockchain.currentBlockNumber     >>= push
-  Timestamp    -> env Blockchain.currentBlockTime       >>= push
-  GasPrice     -> env Blockchain.currentBlockGasPrice   >>= push
-  Difficulty   -> env Blockchain.currentBlockDifficulty >>= push
-  Coinbase     -> env Blockchain.currentBlockCoinbase   >>= push
+  BlockHash    -> env Chain.blockHash       >>= push
+  Number       -> env Chain.blockNumber     >>= push
+  Timestamp    -> env Chain.blockTime       >>= push
+  GasPrice     -> env Chain.blockGasPrice   >>= push
+  Difficulty   -> env Chain.blockDifficulty >>= push
+  Coinbase     -> env Chain.blockCoinbase   >>= push
   -- Stack, memory, storage and flow operations
   Pop          -> void pop
   Jump         -> jump
@@ -195,9 +199,9 @@ perform op = case op of
   MStore       -> pop2 >>= \(p, x) -> getMemory >>= setMemory . setWord (int p) x
   MStore8      -> pop2 >>= \(p, x) -> getMemory >>= setMemory . setByte (int p) x
   MSize        -> getMemory >>= push . size
-  SLoad        -> pop >>= \k -> callee >>= env . getStorageAt k >>= \v -> push v >> interrupt (StorageRead k v)
-  SStore       -> pop2 >>= \(k, v) -> callee >>= env . setStorageAt k v >> interrupt (StorageWrite k v)
-  Gas          -> getGas >>= \g -> push $ value g (Sys GasLeft $ toBytes g)
+  SLoad        -> (callee, pop) `to` \c i -> env (storageAt c i) >>= both_ push (interrupt . StorageRead i)
+  SStore       -> (callee, pop2) `to` \c (k, v) -> env (setStorageAt c k v) >> interrupt (StorageWrite k v)
+  Gas          -> getGas >>= push . valueFrom (Sys GasLeft)
   -- Push operations
   Push1  x     -> push x
   Push2  x     -> push x
@@ -315,7 +319,7 @@ externalCall = do
   msgdata        <- pop2i >>= \x -> uncurry fullslice x <$> getMemory
   (retp, retsz)  <- pop2
   updateGas $ \x -> x - uint gas
-  callee >>= env . Blockchain.debitAccount val
+  callee >>= env . flip Chain.debit val . toBytes
   interrupt $ ExternalCall  (gas, to, val, msgdata, retp, retsz)
   push $ value 1 Nul
 
@@ -338,6 +342,9 @@ pop3   = consume 3 >>= return . (\[x, y, z] -> (x, y, z))
 popi   = consume 1 >>= return . (\[x]       -> x        ) . map int
 pop2i  = consume 2 >>= return . (\[x, y]    -> (x, y)   ) . map int
 pop3i  = consume 3 >>= return . (\[x, y, z] -> (x, y, z)) . map int
+popb   = consume 1 >>= return . (\[x]       -> x        ) . map toBytes
+pop2b  = consume 2 >>= return . (\[x, y]    -> (x, y)   ) . map toBytes
+pop3b  = consume 3 >>= return . (\[x, y, z] -> (x, y, z)) . map toBytes
 push x = updateStack (x:)
 
 -- | Get the word at a 0-indexed position in the stack

@@ -9,9 +9,11 @@ import Text.Structured (toString)
 
 import Fluidity.Common.ANSI
 import Fluidity.Common.Binary
-import Fluidity.EVM.Analyse.Dependency
-import Fluidity.EVM.Data.Prov
+import Fluidity.EVM.Analyse.Dependency as D
+import Fluidity.EVM.Data.Prov as P
 import Fluidity.EVM.Data.Format
+import Fluidity.EVM.Data.Value (Value)
+import qualified Fluidity.EVM.Data.Value as Value
 
 
 showFormula :: Prov -> String
@@ -19,12 +21,15 @@ showFormula = snd . asFormula
 
 intermediatesEnabled = False
 
+fromValue :: Provenance a => a -> String
+fromValue = showExpr . simplify . convert . prov
+
 asFormula :: Prov -> (Int, String)
 asFormula pv = case pv of
   Env t bs -> (10, showEnv t)
   Sys t bs -> (10, showSys t)
   Usr t bs -> (10, showUsr t)
-  Ext t bs -> (10, showUsr t)
+  P.Ext t bs -> (10, showUsr t)
 
   BinOp t bs x y -> 
     let (prec, op) = binOp t
@@ -54,20 +59,26 @@ asFormula pv = case pv of
   DirtyRead bs xs  -> 
     (7, intercalate " & " $ concatMap (\(n, x) -> [subFormula 7 x, showShift n]) xs)
 
-  Nul -> (10, "0")
+  P.Nul -> (10, "0")
 
 showExpr :: Expr -> String
 showExpr expr = toString . colour Blue $ 
   let
     showE ex = case ex of
-      Lit bs     -> (10,  abbreviated bs)
-      Var x      -> (10,  show x)
-      Msg a b    -> (10,  "CallData[" ++ show a ++ ":" ++ show b ++ "]")
-      Op2 t a b  -> let (prec, op) = binOp t
-                    in (prec, sub prec a ++ " " ++ op ++ " " ++ sub prec b)
-      Op1 t a    -> let (prec, op) = unaOp t
-                    in (prec, op ++ sub prec a)
-      SHA a      -> (8, "sha3 " ++ sub 8 a)
+      D.Lit bs     -> (10,  smartStub bs)
+      D.Var x      -> (10,  show x)
+      D.Ext x      -> (10,  var x)
+      D.Msg a b    -> (10,  "CallData[" ++ show a ++ ":" ++ show b ++ "]")
+      D.Op2 t a b  -> let (prec, op) = binOp t
+                      in (prec, sub prec a ++ " " ++ op ++ " " ++ sub prec b)
+      D.Op1 t a    -> let (prec, op) = unaOp t
+                      in (prec, op ++ sub prec a)
+      D.SHA a      -> (8, "sha3 " ++ sub 8 a)
+      D.Nul        -> (10, "null")
+
+    var x = case x of
+      D.Storage k v -> "Storage[" ++ smartStub k ++ "]"
+      _           -> show x
 
     sub parentPrec ex = 
       let (childPrec, str) = showE ex
@@ -84,14 +95,14 @@ structure pv = case pv of
   Env t _ -> "Env " ++ show t
   Sys t _ -> "Sys " ++ show t
   Usr t _ -> "Usr " ++ show t
-  Ext t _ -> "Ext " ++ show t
+  P.Ext t _ -> "Ext " ++ show t
   BinOp t _ x y   -> "BinOp " ++ show t ++ "(" ++ structure x ++ ") (" ++ structure y ++ ")"
   UnaOp t _ x     -> "UnaOp " ++ show t ++ "(" ++ structure x ++ ")"
   MemOp t _ x y z -> "MemOp " ++ show t ++ "(" ++ structure x ++ ") (" ++ structure y ++ ") (" ++ structure z ++ ")"
   SliceRead _ p   -> "SliceRead (" ++ structure p ++ ")"
   TransRead _ n p -> "TransRead " ++ show n ++ " (" ++ structure p ++ ")"
   DirtyRead _ xs  -> "DirtyRead [" ++ (intercalate ", " $ map (\(i,x) -> "(" ++ show i ++ ", " ++ structure x ++ ")") xs) ++ "]"
-  Nul -> "null"
+  P.Nul -> "null"
 
 showConstant :: B.ByteString -> String
 showConstant bs =

@@ -37,6 +37,16 @@ instance Provenance Value where
 value :: Integer -> Prov -> Value
 value i = Value (mod256 i)
 
+-- | Create a new value
+valueFrom :: (ByteString -> Prov) -> Integer -> Value
+valueFrom p i = Value (mod256 i) (p x)
+  where x = toBytes i
+
+-- | Create a new value
+valueFrom' :: (ByteString -> Prov) -> ByteString -> Value
+valueFrom' p x = Value i $ p x
+  where i = mod256 $ fromBytes x
+
 -- | Create a new value from bytes
 bytevalue :: Bytes a => a -> Prov -> Value
 bytevalue x prov = Value (mod256 i) prov

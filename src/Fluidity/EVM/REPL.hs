@@ -5,6 +5,7 @@ import Prelude hiding (Value, break, fail, print, putStr, putStrLn)
 import qualified Prelude
 import Control.Monad (forever, when, void)
 import Control.Monad.IO.Class (liftIO)
+import System.IO (BufferMode(NoBuffering), hSetBuffering, stdout)
 import Data.ByteString (ByteString)
 import Data.Char (isSpace)
 import Data.Functor.Identity (Identity(runIdentity))
@@ -23,12 +24,14 @@ import qualified Data.Map as Map
 import qualified Data.Set as Set
 import qualified Data.Text as T
 import qualified System.Console.Haskeline as HL
+import qualified System.Console.Haskeline.History as HL.History
 import qualified System.IO as IO
 
 import Control.Monad.Result
 import Control.Monad.Resultant
+import Control.Monad.Resultant.IO
 import Control.Monad.Execution (execute)
-import Text.Structured (Structured(fmt), block, typeset, (~-), (~~))
+import Text.Structured (Structured(fmt), block, toString, typeset, (~-), (~~))
 import qualified Control.Monad.Execution as Execution
 import qualified Text.Structured as TS
 
@@ -48,6 +51,7 @@ import qualified Fluidity.EVM.Data.ByteField as ByteField
 import qualified Fluidity.EVM.Blockchain as Blockchain
 import qualified Fluidity.EVM.Control as Control
 import qualified Fluidity.EVM.Data.Bytecode as Bytecode
+import qualified Fluidity.EVM.Data.Snapshot as Snapshot
 import qualified Fluidity.EVM.VM as VM
 
 import Fluidity.EVM.REPL.Monad hiding (REPL, Error)
@@ -88,101 +92,89 @@ instance Structured Control.Error where
     Control.VMError e -> fmt e
     _                 -> "Control error:" ~- show err
 
-
 instance Structured Bytecode.Error where
   fmt = fmt . show
 
 
-runWithSetup :: REPL () -> IO (Result Error ())
-runWithSetup pre = 
-  let
+start :: State -> String -> IO (Result Error ())
+start state name = run $ do
+  putStrLn . toString $ colour Green "aevm 0.2.0"
+  putStrLn ""
+
+  setState state
+  loadSnapshot name
+
+  putStrLn "Type ':help' for usage information"
+  safely $ hSetBuffering stdout NoBuffering
+  repl
+
+repl :: REPL ()
+repl = untilError . recoverWith onError $ do
+  txt   <- toString . highlight Green . embolden <$> getPrompt
+  input <- haskeline $ HL.getInputLine txt
+  line  <- dropWhileEnd isSpace <$> fromMaybe Quit input
+  if line == ""
+  then return ()
+  else do
+    cmd   <- point . mapError (ParseError $ length txt) $ Parser.parse line
+    case cmd of
+      Cmd.Chain    x -> REPL.Chain.runCommand    x
+      Cmd.EVM      x -> REPL.EVM.runCommand      x
+      Cmd.Meta     x -> REPL.Meta.runCommand     x
+      Cmd.Monitor  x -> REPL.Monitor.runCommand  x
+      Cmd.Parallel x -> REPL.Parallel.runCommand x
+      Cmd.State    x -> REPL.State.runCommand    x
+
+onCtrlC :: InputT IO (Result Error ())
+onCtrlC = return $ return ()
+
+onError :: Error -> REPL ()
+onError err = case err of
+  IOError "Interrupt" -> return ()
+  Quit                -> do h <- safely $ HL.History.readHistory ".aevm-history"
+                            lift $ HL.putHistory h
+                            fail Quit
+  _                   -> putStrLn $ toString err
+  
+
+loadSnapshot :: String -> REPL ()
+loadSnapshot name = do
+  dataDir <- getDataDir
+  result  <- safely $ rdo (Snapshot.loadSnapshot name) (Snapshot.State dataDir)
+  chain   <- subpoint result 
+  mutate $ Control.setBlockchain chain
+
+run :: REPL () -> IO (Result Error ())
+run ma = HL.runInputT settings . HL.handleInterrupt onCtrlC . HL.withInterrupt $ rdo ma initState
+  where
     settings :: HL.Settings IO
     settings = ( HL.defaultSettings :: HL.Settings IO )
       { HL.historyFile = Just ".aevm-history"
       , HL.complete    = Cmd.complete 
       }
-    task     = welcome >> pre >> repl
-  in
-    HL.runInputT settings . fmap snd $ runResultantT task initState
 
-loadMany :: [(Address, Balance, Bytecode, StorageDB)] -> REPL ()
-loadMany contracts =
-  let
-    doImport (a,b,c,s) = Blockchain.importContract a b c s
-    fst4 (a,b,c,d)     = a
-    addrs              = map fst4 contracts
-  in do
-    mutateBlockchain $ mapM_ doImport contracts
-    printLn $ "Loaded" ~- length contracts ~- "contracts"
-
-load :: Address -> Balance -> Bytecode -> StorageDB -> REPL ()
-load addr val code storage  = do
-  mutateBlockchain $ Blockchain.importContract addr val code storage
-  printStatus $ "Loaded contract at address " <> Format.address addr
-
-fromSnapshot :: AccountDB -> REPL ()
-fromSnapshot accts = do
-  mutateBlockchain $ Blockchain.setAccounts accts
-  printStatus $ "Loaded " <> show (Map.size accts) <> " accounts"
-
-repl :: REPL ()
-repl = do
-  lift . liftIO $ IO.hSetBuffering IO.stdout IO.NoBuffering
-  void $ forever prompt
-
-welcome :: REPL ()
-welcome = do
-  printLn "Fluidity EVM 0.1.0"
-  printLn "Type ':help' for usage information\n"
-
-prompt :: REPL ()
-prompt = 
-  let
-    onError :: Error -> REPL ()
-    onError = printLn . typeset
-
-  in recoverWith onError $ do
-    txt   <- (typeset . highlight Green . embolden) <$> getPrompt
-    input <- lift . HL.getInputLine $ T.unpack txt
-    line  <- dropWhileEnd isSpace <$> fromMaybe Quit input
-    if line == ""
-    then return ()
-    else do
-      cmd   <- point . mapError (ParseError $ T.length txt) $ Parser.parse line
-      case cmd of
-        Cmd.Chain    x -> REPL.Chain.runCommand    x
-        Cmd.EVM      x -> REPL.EVM.runCommand      x
-        Cmd.Meta     x -> REPL.Meta.runCommand     x
-        Cmd.Monitor  x -> REPL.Monitor.runCommand  x
-        Cmd.Parallel x -> REPL.Parallel.runCommand x
-        Cmd.State    x -> REPL.State.runCommand    x
-
-
--- REPL display and formatting
--- ---------------------------------------------------------------------
-
-printStatus :: String -> REPL ()
-printStatus x = print "--- " >> printLn x
-
-printError :: Error -> REPL ()
-printError x = print "!!! " >> printLn (show x)
-
+haskeline :: InputT IO a -> REPL a
+haskeline ma = safely . HL.runInputT settings $ HL.withInterrupt ma
+  where
+    settings :: HL.Settings IO
+    settings = ( HL.defaultSettings :: HL.Settings IO )
+      { HL.historyFile = Just ".aevm-history"
+      , HL.complete    = Cmd.complete 
+      }
 
 getPrompt :: REPL String
 getPrompt = query Control.isInCall >>= \c ->
   if not c
-  then return "Idle> "
+  then return "aevm> "
   else do
-  pc      <- queryVM VM.getPC
-  stack   <- queryVM VM.getStack
-  memory  <- queryVM VM.getMemory
-  op  <- withDefault "<no code>" $ fmap (unpack . typeset . fst) (queryVM VM.nextOp)
-  return . unpack . typeset $ 
-       (TS.hexdigits 4 pc)
-    ~- "|"
-    ~- length stack ~~ "/"
-    ~~ (ByteField.size memory) ~~ "/"
-    ~- "|" ~- op
-    ~- ">>> "
+  pc       <- queryVM VM.getPC
+  stackLen <- length         <$> queryVM VM.getStack
+  memorySz <- ByteField.size <$> queryVM VM.getMemory
+  op       <- snd            <$> queryVM VM.nextOp
+  return . unpack . typeset 
+    $ Format.codeptr pc
+   ~- stackLen ~~ "/" ~~ memorySz
+   ~- op
+   ~- ">>> "
 
 

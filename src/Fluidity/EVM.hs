@@ -1,3 +1,5 @@
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE TypeSynonymInstances #-}
 module Fluidity.EVM where
 
 import Prelude hiding (fail, putStrLn, readFile)
@@ -11,6 +13,7 @@ import qualified Data.Text as T
 
 import Control.Monad.Result
 import Control.Monad.Resultant
+import Control.Monad.Resultant.IO
 import Text.Structured (Structured(fmt), typeset, withLineNumbers, (~-))
 
 import Fluidity.Common.Binary (fromHex, fromBytes, toBytes)
@@ -20,24 +23,27 @@ import Fluidity.EVM.Data.Account
 import Fluidity.EVM.Data.Value
 import Fluidity.EVM.Data.ByteField (fromByteString)
 import Fluidity.EVM.Data.Prov (Prov(Env, Ext), Usr(Code))
+import Fluidity.EVM.Data.Import (Import)
+import Fluidity.EVM.Data.Snapshot (Snap)
 import qualified Fluidity.EVM.Data.Bytecode as Bytecode
 import qualified Fluidity.EVM.VM as VM
 import qualified Fluidity.EVM.Data.Import as Import
 import qualified Fluidity.EVM.Data.Snapshot as Snapshot
 import qualified Fluidity.EVM.REPL as REPL
+import qualified Fluidity.EVM.REPL.Monad as REPL.Monad
 import qualified Fluidity.EVM.Data.Prov as Prov
 
 
 type EVM = ResultantT IO State Error
 
 data State = State
-  { roDataDir :: FilePath
+  { stDataDir :: FilePath
   }
 
 data REPLOpts = REPLOpts
-  { roMaxChunks   :: Maybe Int
-  , roNoDupes     :: Bool
-  , rSnapshot     :: String
+  { roMaxChunks :: Maybe Int
+  , roNoDupes   :: Bool
+  , rSnapshot   :: String
   }
 
 data ImportOpts = ImportOpts
@@ -46,52 +52,30 @@ data ImportOpts = ImportOpts
   }
 
 data Error
-  = REPLError         REPL.Error
-  | SnapshotError     Snapshot.RLPError
+  = REPLError   REPL.Error
+  | ImportError Import.Error
+  | IOError     String
   deriving (Show)
 
-instance Structured Error where
-  fmt e = case e of
-    REPLError x     -> "REPL error:" ~- x
-    SnapshotError x -> "Snapshot error:" ~- show x
+instance SubError Error REPL.Error   where suberror = REPLError
+instance SubError Error Import.Error where suberror = ImportError
+instance Exceptional Error where fromException = IOError . show
+instance Structured Error where fmt = fmt . show
 
 
--- EVM control operations
--- ---------------------------------------------------------------------
-
-repl :: REPLOpts -> EVM ()
-repl (REPLOpts chunks dupes name) = do
-  dataDir  <- getDataDir
-  snapshot <- loadSnapshot maxChunks
-  snapshot <- runSnapshot
-    . Snapshot.loadSnapshot name chunks dupes
-    $ Snapshot.State dataDir
-  runREPL $ REPL.fromSnapshot snapshot
-
-importSnapshot :: ImportOpts -> EVM ()
-importSnapshot (ImportOpts name src) = do
+doREPL :: REPLOpts -> EVM ()
+doREPL (REPLOpts chunks dupes name) = do
   dataDir <- getDataDir
-  runSnapshot . Import.importSnapshot $ Import.State
-    { Import.stDataDir       = dir
-    , Import.stSrcDir        = src
-    , Import.stTargetName    = name
-    , Import.stMatchFailures = 0
-    }
+  let state = REPL.Monad.initState
+        { REPL.Monad.stDataDir = dataDir
+        }
+  result <- safely $ REPL.start state name
+  subpoint result
 
--- Runnng things in other monads
--- ---------------------------------------------------------------------
-
-runSnapshot :: Snapshot a -> Snapshot.State -> EVM a
-runSnapshot ma st =
-   (lift $ runResultantT ma st) >>= point . mapError SnapshotError . snd
-
-runImport :: Import a -> Import.State -> EVM a
-runImport ma st =
-   (lift $ runResultantT ma st) >>= point . mapError ImportError . snd
-
-runREPL :: REPL a -> REPL.State -> EVM a
-runREPL ma st =
-   (lift $ runResultantT ma st) >>= point . mapError REPLError . snd
+doImport :: ImportOpts -> EVM ()
+doImport (ImportOpts name src) = do
+  dataDir <- getDataDir
+  runWith (Import.importState src) (Import.State dataDir)
 
 
 -- Monad access

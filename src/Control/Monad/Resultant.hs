@@ -51,10 +51,12 @@ instance Monad i => Rise ResultantT i s e where
 -- Utility functions
 -- ---------------------------------------------------------------------
 
-
 class (Monad (r i s e), Monad i) => Rise (r :: (* -> *) -> * -> * -> * -> *) i s e where
   rrun :: r i s e a -> s -> i (s, Result e a)
   rcon :: (s -> i (s, Result e a)) -> r i s e a
+
+  rdo  :: r i s e a -> s -> i (Result e a)
+  rdo ma s = snd <$> rrun ma s
 
   point :: Result e a -> r i s e a
   point x = rcon $ \s -> return (s, x)
@@ -98,6 +100,11 @@ class (Monad (r i s e), Monad i) => Rise (r :: (* -> *) -> * -> * -> * -> *) i s
   withDefault :: a -> r i s e a -> r i s e a
   withDefault a ma = \case { Ok x -> x ; Err _ -> a } <$> revive ma
 
+  untilError :: r i s e a -> r i s e a
+  untilError ma = do
+    _ <- ma
+    untilError ma
+
   -- Conversions
 
   fromMaybe :: e -> Maybe a -> r i s e a
@@ -119,8 +126,14 @@ class SubError e e' where
 
 runIn :: (Rise r1 i1 s1 e1, Rise r2 i2 s2 e2, SubError e1 e2) => r2 i2 s2 e2 a -> s2 -> i2 (r1 i1 s1 e1 a)
 runIn ma st = do
-  result <- snd <$> rrun ma st
+  result <- rdo ma st
   return . point $ mapError suberror result
 
+runWith :: (Rise r1 i s1 e1, Rise r2 i s2 e2, SubError e1 e2) => r2 i s2 e2 a -> s2 -> r1 i s1 e1 a
+runWith ma st =
+  rjoin (point . mapError suberror <$> rdo ma st)
+
+subpoint :: (Rise r i s e, SubError e e') => Result e' a -> r i s e a
+subpoint r = point $ mapError suberror r
 
 

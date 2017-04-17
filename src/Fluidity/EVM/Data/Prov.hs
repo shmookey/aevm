@@ -70,7 +70,7 @@ data Env
   deriving (Eq, Show, Generic, NFData)
 
 data Usr
-  = CallValue | CallGas | CallData | Balance | Code | Import
+  = CallValue | CallGas | CallData | Balance | Code | Import | Storage ByteString ByteString
   deriving (Eq, Show, Generic, NFData)
 
 data BinOp
@@ -99,5 +99,5 @@ valueAt pv = case pv of
   SliceRead bs _   -> bs
   TransRead bs _ _ -> bs
   DirtyRead bs _   -> bs
-  Nul -> B.singleton 1
+  Nul              -> mempty
   

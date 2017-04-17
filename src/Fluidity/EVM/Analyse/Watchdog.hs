@@ -35,12 +35,12 @@ instance Structured Event where
       in JumpI ~- fmtCodePtr jmp ~- path ~- x
 
     StorageRead p (k, ke) (v, ve) ->
-      SLoad ~- stub k ~- ">>" ~-
+      SLoad ~- shortSmart 8 k ~- ">>" ~-
       smart' v ~- "K={" ~- showExpr ke ~- 
       "} V={" ~- showExpr ve ~- "}"
 
     StorageWrite p (k, ke) (v, ve) ->
-      SStore ~- stub k ~- "<<" ~- 
+      SStore ~- shortSmart 8 k ~- "<<" ~- 
       smart' v ~- "K={" ~- showExpr ke ~- 
       "} V={" ~- showExpr ve ~- "}"
 

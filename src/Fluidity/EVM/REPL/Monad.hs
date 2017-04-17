@@ -1,20 +1,23 @@
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE TypeSynonymInstances #-}
 module Fluidity.EVM.REPL.Monad where
 
 import Prelude hiding (Value, break, fail, print, putStr, putStrLn)
 import qualified Prelude
 import Control.DeepSeq
-import Control.Monad.IO.Class (liftIO)
 import Data.ByteString (ByteString)
 import Data.Functor.Identity (Identity(runIdentity))
 import Data.Map (Map)
 import Data.Text (Text, pack, unpack)
 import System.Console.ANSI
 import System.Console.Haskeline (InputT)
+import qualified System.Console.Haskeline.MonadException as ME
 import qualified Data.Map as Map
 import qualified Data.Text as T
 
 import Control.Monad.Result
 import Control.Monad.Resultant
+import Control.Monad.Resultant.IO
 import Control.Monad.Execution (execute)
 import Text.Structured (Structured(fmt), block, typeset, (~-), (~~))
 import qualified Control.Monad.Execution as Execution
@@ -33,6 +36,7 @@ import Fluidity.EVM.Data.Prov (Prov(Env))
 import Fluidity.EVM.Data.Value
 import qualified Fluidity.EVM.Analyse.Watchdog as Watchdog
 import qualified Fluidity.EVM.Data.Prov as Prov
+import qualified Fluidity.EVM.Data.Snapshot as Snapshot
 import qualified Fluidity.EVM.Parallel as Parallel
 import qualified Fluidity.EVM.REPL.Command as Cmd
 import qualified Fluidity.EVM.REPL.Parser as Parser
@@ -50,6 +54,7 @@ data State = State
   , stMode         :: Mode
   , stParSets      :: Map String ParSet
   , stMonitoring   :: Bool
+  , stDataDir      :: FilePath
   }
 
 data ParSet = ParSet [(ByteString, Control.State)]
@@ -65,9 +70,18 @@ data Error
   | NonUniqueAccountPrefix ByteString
   | NoSuchSet String
   | InternalError
+  | IOError String
+  | SnapshotError Snapshot.Error
   | Quit
   deriving (Show)
 
+instance Exceptional Error where
+  fromException = IOError . show
+
+instance SubError Error Snapshot.Error where suberror = SnapshotError
+
+--instance ME.MonadException REPL where
+--  controlIO (ME.runIO f) 
 
 initState :: State
 initState = 
@@ -79,6 +93,7 @@ initState =
     , stMode         = Single
     , stParSets      = mempty
     , stMonitoring   = True
+    , stDataDir      = ".aevm"
     }
 
 
@@ -193,11 +208,11 @@ uniqueAddress address =
     addr = case address of Cmd.Address x -> x
                            Cmd.Prefix x  -> x
   in do
-    addrs <- queryBlockchain $ Blockchain.matchAccounts addr
+    addrs <- queryBlockchain $ Blockchain.addressesByPrefix addr
     case addrs of
-      [(x, _)] -> return x
-      []       -> fail $ NoMatchingAccount addr
-      _        -> fail $ NonUniqueAccountPrefix addr
+      [x] -> return x
+      []  -> fail $ NoMatchingAccount addr
+      _   -> fail $ NonUniqueAccountPrefix addr
   
 matchingAddresses :: Cmd.Address -> REPL [ByteString]
 matchingAddresses x = map fst <$> matchingAccounts x
@@ -208,7 +223,7 @@ matchingAccounts address =
     addr = case address of Cmd.Address x -> x
                            Cmd.Prefix x  -> x
   in do
-    accts <- queryBlockchain $ Blockchain.matchAccounts addr
+    accts <- queryBlockchain $ Blockchain.accountsByPrefix addr
     case accts of
       _:_      -> return accts
       []       -> fail $ NoMatchingAccount addr
@@ -216,12 +231,6 @@ matchingAccounts address =
 
 -- General IO
 -- ---------------------------------------------------------------------
-
-putStr :: String -> REPL ()
-putStr = lift . liftIO . Prelude.putStr
-
-putStrLn :: String -> REPL ()
-putStrLn = lift . liftIO . Prelude.putStrLn
 
 putTxt :: Text -> REPL ()
 putTxt = putStr . unpack
@@ -235,13 +244,12 @@ print = putStr . unpack . typeset
 printLn :: Structured a => a -> REPL ()
 printLn = putStrLn . unpack . typeset
 
-io :: IO a -> REPL a
-io = lift . liftIO
 
 -- Monad state
 -- ---------------------------------------------------------------------
 
 getAddress           = stAddress      <$> getState :: REPL Address
+getDataDir           = stDataDir      <$> getState :: REPL FilePath
 getControlState      = stControlState <$> getState :: REPL Control.State
 getMode              = stMode         <$> getState :: REPL Mode
 getParSets           = stParSets      <$> getState :: REPL (Map String ParSet)

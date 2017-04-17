@@ -13,7 +13,7 @@ import qualified Text.Parsec as P
 import Control.Monad.Result
 
 import Confound.Methods (methodHash')
-import Fluidity.Common.Binary (fromHex, fromHexOnly, unroll, padBytes, toBytes)
+import Fluidity.Common.Binary (fromHex, fromHexOnly, unroll, padBytes, toBytes, roll)
 import Fluidity.EVM.Data.ByteField (ByteField, fromByteString)
 import Fluidity.EVM.Data.Value
 import Fluidity.EVM.Data.Prov (Prov(Usr))
@@ -79,9 +79,9 @@ cmdEVM =
     P.choice
       [ const Go   <$> keyword "go"
       , const Step <$> keyword "step"
-      , do keyword "break"
+      , do keyword "breakat"
            space
-           x <- litInt
+           x <- integer
            return $ BreakAt x
       , do keyword "call"
            space
@@ -449,6 +449,9 @@ commaSpace = (P.try (optionalSpace >> comma >> optionalSpace)) <?> "comma"
 colonSpace = (P.try (optionalSpace >> colon >> optionalSpace)) <?> "colon"
 
 hex = (P.try (nakedHex <|> litHex)) <?> "even-length hex string"
+
+integer :: Parse Integer
+integer = litInt <|> fmap roll hex
 
 nakedHex :: Parse ByteString
 nakedHex = token $ \t -> case t of

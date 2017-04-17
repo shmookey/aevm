@@ -12,6 +12,7 @@ import qualified Data.Maybe as Maybe
 
 import Control.Monad.Result
 import Control.Monad.Resultant
+import Control.Monad.Resultant.IO
 import Text.Structured (fmt, (~-), (~~))
 
 import Confound.Methods (methodHash')
@@ -25,6 +26,7 @@ import Fluidity.EVM.Data.Format (stubAddress)
 import Fluidity.EVM.Data.ByteField
 import Fluidity.EVM.Analyse.Outcome (PostMortem)
 import Fluidity.EVM.Text (formatStorage)
+import qualified Fluidity.EVM.Data.Account as Acct
 import qualified Fluidity.EVM.Analyse.Outcome as Outcome
 import qualified Fluidity.EVM.Blockchain as Blockchain
 import qualified Fluidity.EVM.Parallel as Parallel
@@ -141,9 +143,9 @@ showStorage x =
     show1 :: ByteString -> Control.State -> REPL ()
     show1 addr st = 
       let
-        bc    = Control.stBlockchain st
-        accts = Blockchain.stAccounts bc
-        Just (Contract _ _ storage) = Map.lookup addr accts
+        bc      = Control.stBlockchain st
+        accts   = Blockchain.stAccountDB bc
+        storage = Acct.storage addr accts
      in do
        printLn $ Format.address addr ~~ ":"
        printLn $ formatStorage storage

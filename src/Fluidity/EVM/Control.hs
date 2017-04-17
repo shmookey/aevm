@@ -93,16 +93,16 @@ breakAt x = setRunMode (Until x) >> resume
 
 -- | Respond to a VM interrupt, updating the call stack with the new VM state
 handleInterrupt :: VM.Interrupt -> VM.State -> Control Bool
-handleInterrupt ev st = getMonitoring >>= \monitoring ->
-  if not monitoring
-  then return True
+handleInterrupt ev st = do
+  updateVMState st
+  breaking   <- atBreakpoint ev
+  monitoring <- getMonitoring
+  pc         <- return $ VM.stPC st
+  if breaking            then return False
+  else if isCycle ev     then return True
+  else if not monitoring then return True
   else do
-    updateVMState st
-    mode <- getRunMode
-
-    let pc = VM.stPC st
     mapM_ (interrupt . WatchdogEvent) $ (force $ Watchdog.analyse ev pc)
-    
     isUninterruptible <- not <$> getInterruptible
     isAnalyticMode    <- getAnalyticMode
     if isAnalyticMode
@@ -115,18 +115,21 @@ handleInterrupt ev st = getMonitoring >>= \monitoring ->
         interrupt $ CheckpointSaved i "Program load"
         return True
 
-      VM.BeginCycle ptr -> case mode of
-        Run     -> return True
-        Step    -> return isUninterruptible
-        Until x -> return $ ptr /= x
-
-      VM.StorageWrite _ _ -> do
-        if not isAnalyticMode 
-        then interrupt $ VMInterrupt ev pc
-        else return ()
-        return True
-
       _ -> return True
+
+isCycle :: VM.Interrupt -> Bool
+isCycle ev = case ev of
+  VM.NextCycle _  -> True
+  VM.BeginCycle _ -> True
+  _               -> False
+
+atBreakpoint :: VM.Interrupt -> Control Bool
+atBreakpoint ev = do
+  mode <- getRunMode
+  return $ case (mode, ev) of
+    (Step, VM.NextCycle _)    -> True
+    (Until a, VM.NextCycle b) -> a == b
+    _                         -> False
 
 
 -- Call stack

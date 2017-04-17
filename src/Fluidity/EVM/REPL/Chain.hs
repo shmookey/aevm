@@ -2,18 +2,21 @@ module Fluidity.EVM.REPL.Chain where
 
 import Prelude hiding (fail, putStrLn)
 import Data.ByteString.Char8 (ByteString)
+import Data.Maybe as Maybe (fromMaybe)
 import qualified Data.Map as Map
 
 import Control.Monad.Resultant
+import Control.Monad.Resultant.IO
 import Text.Structured (Structured(fmt), (~-), (~~))
 
 import Fluidity.Common.Binary
 import Fluidity.EVM.Types
 import Fluidity.EVM.REPL.Monad
 import Fluidity.EVM.Blockchain (Block(..))
+import Fluidity.EVM.Data.Account (Account(Account))
 import Fluidity.EVM.Data.Value
-import Fluidity.EVM.Data.Account hiding (getStorageAt, setStorageAt)
 import Fluidity.EVM.Data.Format (stub, currency)
+import qualified Fluidity.EVM.Data.Account as Acct
 import qualified Fluidity.EVM.Data.Format as Format
 import qualified Fluidity.EVM.Blockchain as Blockchain
 import qualified Fluidity.EVM.REPL.Command as Cmd
@@ -55,7 +58,6 @@ blockShow mi =
 blockList :: REPL ()
 blockList = 
   let
-    showBlockListing :: Block -> String
     showBlockListing blk = show blk
   in do
     blocks <- queryBlockchain Blockchain.getBlocks
@@ -64,26 +66,17 @@ blockList =
 listAccounts :: Maybe Cmd.Address -> REPL ()
 listAccounts prefix = 
   let
-    showAccount (addr,acct) = case acct of
-      User val         -> "U" ~- Format.address addr ~- Format.currency val
-      Contract val _ _ -> "C" ~- Format.address addr ~- Format.currency val
+    showAccount (addr, Account v _ _) = Format.address addr ~- Format.currency v
   in do
-    accts <- queryBlockchain $ case prefix of
-                Just (Cmd.Prefix p)  -> Blockchain.matchAccounts p
-                Just (Cmd.Address a) -> Blockchain.matchAccounts a
-                Nothing              -> Map.toList <$> Blockchain.getAccounts
+    accts <- matchingAccounts $ Maybe.fromMaybe (Cmd.Prefix mempty) prefix
     mapM_ (printLn . showAccount) accts
 
 getBalance :: Cmd.Address -> REPL ()
 getBalance addr = 
   let
-    showAccount (addr,acct) = case acct of
-      User val -> stub addr ~- val
-      Contract val _ _ -> stub addr ~- uint val
+    showAccount (addr, Account v _ _) = stub addr ~- v
   in do
-    accts <- queryBlockchain $ case addr of
-                Cmd.Prefix p  -> Blockchain.matchAccounts p
-                Cmd.Address a -> Blockchain.matchAccounts a
+    accts <- matchingAccounts addr
     mapM_ (printLn . showAccount) accts
 
 setBalance :: Cmd.Address -> Integer -> REPL ()
@@ -92,11 +85,13 @@ setBalance = error ""
 showAccount :: Cmd.Address -> REPL ()
 showAccount addr = 
   let
-    showAcct :: ByteString -> Account -> String
-    showAcct address acct = show address ++ " " ++ show acct
+    showAcct (address, acct) = do
+      code <- queryBlockchain $ Blockchain.code address
+      return $ Format.accountDetails address acct code
   in do
     accts <- matchingAccounts addr
-    mapM_ (printLn . uncurry showAcct) accts
+    deets <- mapM showAcct accts
+    mapM_ printLn deets
 
 dropAccount :: Cmd.Address -> REPL ()
 dropAccount = error ""
@@ -104,27 +99,16 @@ dropAccount = error ""
 getStorage :: Cmd.Address -> REPL ()
 getStorage addr =
   let
-    showAccount :: (ByteString, Account) -> REPL String
-    showAccount (addr,acct) = case acct of
-      User _ -> fail InternalError
-      Contract _ _ storage -> return $ show storage
+    showAccount (addr, Account _ _ st) = return $ show st
   in do
-    accts <- queryBlockchain $ case addr of
-                Cmd.Prefix p  -> Blockchain.matchAccounts p
-                Cmd.Address a -> Blockchain.matchAccounts a
+    accts <- matchingAccounts addr
     mapM showAccount accts >>= mapM_ printLn
 
 getStorageAt :: Cmd.Address -> ByteString -> REPL ()
-getStorageAt ref key =
-  let
---    showAccount :: (Address, Account) -> REPL String
---    showAccount (addr,acct) = case acct of
---      User _ -> fail InternalError
---      Contract _ _ storage -> return $ show storage
-  in do
-    addr <- uniqueAddress ref
-    val <- queryBlockchain $ Blockchain.getStorageAt' key addr
-    putStrLn $ toHex val 
+getStorageAt ref key = do
+  addr <- uniqueAddress ref
+  val <- queryBlockchain $ Blockchain.storageAt key addr
+  putStrLn $ toHex val 
 
 setStorageAt :: Cmd.Address -> ByteString -> ByteString -> REPL ()
 setStorageAt = error ""

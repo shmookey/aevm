@@ -55,13 +55,15 @@ library
                      , Confound.Methods
                      , Confound.Types
                      , Confound.Util
-                     , Control.Monad.Interruptible
+                     , Control.Monad.Combinator
                      , Control.Monad.Execution
+                     , Control.Monad.Interruptible
                      , Control.Monad.Result
                      , Control.Monad.Resultant
                      , Control.Monad.Resultant.IO
                      , Text.Structured
   build-depends:       base >= 4.7 && < 5
+                     , aeson
                      , ansi-terminal
                      , array
                      , bits-bytestring
@@ -71,14 +73,15 @@ library
                      , cryptonite
                      , deepseq
                      , filepath
+                     , json-stream
                      , haskeline
                      , memory
                      , monad-loops
                      , parallel
                      , parsec
-                     , snappy
                      , split
                      , strict
+                     , unordered-containers
                      , text
                      , time
 

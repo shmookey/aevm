@@ -76,6 +76,10 @@ instance Bytes ByteField where
   toBytes (ByteField bps _) = B.pack $ map bpVal bps
   fromBytes = error "illegal conversion to bytefield, use pack instead"
 
+instance Bytes ByteP where
+  toBytes (ByteP x _ _) = B.singleton x
+  fromBytes = error "illegal conversion to bytep"
+
 instance Show ByteField where
   show = toHex
 
@@ -100,6 +104,19 @@ empty p = pack (p,0) []
 -- | The size of the ByteField in bytes
 size :: ByteField -> Int
 size (ByteField bps _) = length bps
+
+-- | Is the structure empty?
+null :: ByteField -> Bool
+null (ByteField bps _) = case bps of
+  _:_ -> False
+  _   -> True
+
+
+-- | A provenance-tracked Value referencing the ByteField's size
+sizeValue :: ByteField -> Value
+sizeValue x = value sz $ UnaOp Size bs (readProvenance x)
+  where sz = toInteger $ size x
+        bs = toBytes sz
 
 -- | Nul-pad a ByteField to the left
 padLeft :: Int -> ByteField -> ByteField
@@ -141,6 +158,11 @@ fromByteString :: Prov -> ByteString -> ByteField
 fromByteString p = flip ByteField (p, 0) . map mkByte . zip [0..] . B.unpack
   where mkByte (i, b) = ByteP b p i
 
+-- | Create a ByteField from a ByteString with a common provenance and no offset
+fromByteString' :: (ByteString -> Prov) -> ByteString -> ByteField
+fromByteString' p bs = flip ByteField (p bs, 0) . map mkByte . zip [0..] $ B.unpack bs
+  where mkByte (i, b) = ByteP b (p bs) i
+
 -- | Like `fromByteString`, but with an offset
 fromByteStringOffset :: Int -> Prov -> ByteString -> ByteField
 fromByteStringOffset o p = flip ByteField (p, o) . map mkByte . zip [o..] . B.unpack
@@ -181,16 +203,22 @@ fullslice i n = padRight n . slice i n
 
 -- | Write the contents of a ByteField into another at an offset, overwriting and possibly extending the original
 splice :: Int -> ByteField -> ByteField -> ByteField
-splice i a b =
+splice i src dst =
   let
-    start = padRight i $ take i a
-    end   = drop (i + size b) a
+    start = padRight i $ take i dst
+    end   = drop (i + size src) dst
   in
-    mconcat [start, b, end]
+    mconcat [start, src, end]
 
 -- | `copy p1 p2 n a b` splices `n` bytes from `a` starting at `p1` to `b` starting at `p2`
 copy :: Int -> Int -> Int -> ByteField -> ByteField -> ByteField
-copy p1 p2 n a = splice p2 (fullslice p1 n a)
+copy p1 p2 n src = splice p2 (fullslice p1 n src)
+
+-- | Split a ByteField into 32-byte words
+splitWords :: ByteField -> [ByteField]
+splitWords bf = 
+  if size bf < 32 then [bf]
+  else take 32 bf : splitWords (drop 32 bf)
 
 
 -- Reading and writing Values
@@ -224,7 +252,7 @@ getBytesRaw i n = toBytes . slice i n
 -- | Get the read-provenance of a ByteField, unchanged if the provenance, length and offset of each byte is unchanged
 readProvenance :: ByteField -> Prov
 readProvenance bf = case map fuseGroup $ provGroups bf of
-  []                -> Nul
+  []                -> fst $ bfDefault bf
   (bs, (0, p)) : [] -> SliceRead bs p
 --                       if B.length bs < B.length (valueAt p)
 --                       then SliceRead bs p
@@ -232,17 +260,17 @@ readProvenance bf = case map fuseGroup $ provGroups bf of
   (bs, (o, p)) : [] -> TransRead bs o p
   xs                -> DirtyRead (B.concat $ map fst xs) (map snd xs)
 
--- | Unwraps a ByteString, taking the first non-null prov and (from the same byte) the lowest offset plus its index
+-- | Unwraps a ByteField, taking the first non-null prov and (from the same byte) the lowest offset plus its index
 fuseGroup :: ByteField -> (ByteString, (Int, Prov))
 fuseGroup (ByteField xs dp) = 
   let
-    firstNonNul   = L.findIndex ((/= Nul) . bpProv) xs
-    (prov, offset) = case firstNonNul of
-      Just i -> let b = L.head $ L.drop i xs
-                in (bpProv b, bpOffset b + i)
-      Nothing -> (Nul, 0)
+    firstNonNul = L.findIndex ((/= Nul) . bpProv) xs
+    prov = case firstNonNul of
+      Just i  -> let b = L.head $ L.drop i xs
+                 in (bpOffset b + i, bpProv b)
+      Nothing -> (0, Nul)
   in
-    (B.pack $ L.map bpVal xs, (offset, prov))
+    (B.pack $ L.map bpVal xs, prov)
 
 -- | Split a ByteField into groups of same provenance, where the Nul provenance matches anything
 provGroups :: ByteField -> [ByteField]

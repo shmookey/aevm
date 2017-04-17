@@ -2,6 +2,7 @@
 
 module Fluidity.Common.Binary where
 
+import Prelude hiding (truncate)
 import Data.Bits (Bits, (.|.), shiftL, shiftR, testBit, complement)
 import Data.Bits.ByteString ()
 import Data.ByteString (ByteString)
@@ -56,16 +57,21 @@ toHexS :: Bytes a => a -> String
 toHexS = toHex
 
 fromHex :: (Bytes a, Bytes b) => a -> b
-fromHex = fromBytes . fst . B16.decode . toBytes
+fromHex = fromBytes . fst . B16.decode . padEven . toBytes
 
 toHexWord :: (Bytes a, Bytes b) => Int -> a -> b
 toHexWord sz = toHex . padBytes sz . toBytes
 
+-- Parse the entire input as hex, or Nothing
 fromHexOnly :: (Bytes a, Bytes b) => a -> Maybe b
 fromHexOnly x = 
-  let (bs, invalids) = B16.decode (toBytes x)
+  let (bs, invalids) = B16.decode . padEven $ toBytes x
   in if B.null invalids then Just (fromBytes bs) else Nothing
 
+padEven :: ByteString -> ByteString
+padEven bs = case B.length bs `mod` 2 of
+  0 -> bs
+  1 -> B8.cons '0' bs
 
 -- Manipulation
 -- ---------------------------------------------------------------------
@@ -78,9 +84,15 @@ padBytes n bs =
         z   = B.pack $ take (n - len) (repeat 0)
     in z `B.append` bs
 
+toWord :: Bytes a => Int -> a -> ByteString
+toWord n = truncate n . padBytes n . toBytes
+
 -- Like `take`, but takes from the right of the ByteString
 truncate :: Int -> ByteString -> ByteString
 truncate n bs = B.drop (max 0 $ B.length bs - n) bs
+
+trim :: ByteString -> ByteString
+trim = B.dropWhile (== 0)
 
 toBool :: Word -> Bool
 toBool x = not $ x == 0
@@ -125,4 +137,15 @@ hex32 x = printf "0x%08x" x
 hex64 :: Word64 -> String
 hex64 x = printf "0x%16x" x
 
+formatSize :: ByteString -> String
+formatSize bs = 
+  let
+    n = B.length bs
+    f :: String -> Integer -> String
+    f x r = printf "%1.2f%s" (fromIntegral n / fromIntegral r :: Double) x
+  in
+    if      n > 2^30 then f "Gb" $ 2^30
+    else if n > 2^20 then f "Mb" $ 2^20
+    else if n > 2^10 then f "Kb" $ 2^10
+    else                  f "b"  $ 1
 

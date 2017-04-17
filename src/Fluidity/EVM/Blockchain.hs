@@ -19,15 +19,16 @@ import Fluidity.EVM.Data.Operations (add, sub)
 import Fluidity.EVM.Data.Transaction
 import Fluidity.EVM.Data.Prov (Prov(Env), Env(..))
 import Fluidity.EVM.Data.Value (Value, value, asAddress, uint)
-import Fluidity.EVM.Data.Account
-import qualified Fluidity.EVM.Data.Account as Account
+import Fluidity.EVM.Data.Account (Account, AccountDB, CodeDB, StorageDB)
+import qualified Fluidity.EVM.Data.Account as Acct
 
 type Blockchain = Resultant State Error
 
 data State = State
   { stBlocks        :: [Block]
-  , stAccounts      :: AccountDB
+  , stAccountDB      :: AccountDB
   , stCurrentBlock  :: Block
+  , stCodeDB        :: CodeDB
   } deriving (Show)
 
 data Error
@@ -73,27 +74,65 @@ commitBlock =
       , blkNumber = update BlockNumber (+1) $ blkNumber current
       }
 
-currentBlockTime :: Blockchain Value
-currentBlockTime = blkTime <$> getCurrentBlock
+blockTime       = blkTime       <$> getCurrentBlock
+blockHash       = blkHash       <$> getCurrentBlock
+blockNumber     = blkNumber     <$> getCurrentBlock
+blockGasPrice   = blkGasPrice   <$> getCurrentBlock
+blockDifficulty = blkDifficulty <$> getCurrentBlock
+blockCoinbase   = blkCoinbase   <$> getCurrentBlock
 
-currentBlockHash :: Blockchain Value
-currentBlockHash = blkHash <$> getCurrentBlock
 
-currentBlockNumber :: Blockchain Value
-currentBlockNumber = blkNumber <$> getCurrentBlock
+-- Proxy functions to Fluidity.EVM.Data.Account
+-- ---------------------------------------------------------------------
 
-currentBlockGasPrice :: Blockchain Value
-currentBlockGasPrice = blkGasPrice <$> getCurrentBlock
+account         k     = Acct.account   k   <$> getAccountDB
+balance         k     = Acct.balance   k   <$> getAccountDB
+codeHash        k     = Acct.codeHash  k   <$> getAccountDB
+storage         k     = Acct.storage   k   <$> getAccountDB
+storageAt       k i   = Acct.storageAt k i <$> getAccountDB
+code            k     = Acct.code      k   <$> getAccountDB <*> getCodeDB
+setAccount      k x   = updateAccountDB $ Acct.setAccount      k x
+setBalance      k x   = updateAccountDB $ Acct.setBalance      k x
+setCodeHash     k x   = updateAccountDB $ Acct.setCodeHash     k x
+setStorage      k x   = updateAccountDB $ Acct.setStorage      k x
+setStorageAt    k i x = updateAccountDB $ Acct.setStorageAt    k i x
+updateAccount   f k   = updateAccountDB $ Acct.updateAccount   f k
+updateBalance   f k   = updateAccountDB $ Acct.updateBalance   f k
+updateCodeHash  f k   = updateAccountDB $ Acct.updateCodeHash  f k
+updateStorage   f k   = updateAccountDB $ Acct.updateStorage   f k
+updateStorageAt f k i = updateAccountDB $ Acct.updateStorageAt f k i
+deleteAccount   k     = updateAccountDB $ Acct.deleteAccount   k
+deleteStorageAt k x   = updateAccountDB $ Acct.deleteStorageAt k x
+credit          k x   = updateAccountDB $ Acct.credit          k x
+debit           k x   = updateAccountDB $ Acct.debit           k x
+transfer        k j x = updateAccountDB $ Acct.transfer        k j x
+accountsByPrefix  k   = Acct.accountsByPrefix  k <$> getAccountDB
+addressesByPrefix k   = Acct.addressesByPrefix k <$> getAccountDB
 
-currentBlockDifficulty :: Blockchain Value
-currentBlockDifficulty = blkDifficulty <$> getCurrentBlock
 
-currentBlockCoinbase :: Blockchain Value
-currentBlockCoinbase = blkCoinbase <$> getCurrentBlock
+-- Monad state initialisation and access
+-- ---------------------------------------------------------------------
 
--- TODO: get rid of this, don't originate values here
-genesisBlock :: Block
-genesisBlock = 
+getBlocks          = stBlocks       <$> getState
+getCurrentBlock    = stCurrentBlock <$> getState
+getAccountDB       = stAccountDB    <$> getState
+getCodeDB          = stCodeDB       <$> getState
+setBlocks        x = updateState (\st -> st { stBlocks       = x }) :: Blockchain ()
+setCurrentBlock  x = updateState (\st -> st { stCurrentBlock = x }) :: Blockchain ()
+setAccountDB     x = updateState (\st -> st { stAccountDB    = x }) :: Blockchain ()
+setCodeDB        x = updateState (\st -> st { stCodeDB       = x }) :: Blockchain ()
+updateAccountDB  f = getAccountDB >>= setAccountDB . f
+
+initState :: State
+initState = State
+  { stBlocks       = mempty
+  , stCurrentBlock = genesis
+  , stAccountDB    = mempty
+  , stCodeDB       = mempty
+  }
+
+genesis :: Block
+genesis = 
   let
     nil k = value 0 . Env k $ toBytes (0 :: Int)
   in Block
@@ -105,134 +144,4 @@ genesisBlock =
     , blkCoinbase     = nil Coinbase
     , blkTransactions = mempty
     }
-
-
--- Accounts
--- ---------------------------------------------------------------------
-
-getAccount :: Address -> Blockchain Account
-getAccount addr = getAccount' $ bytes addr
-
--- | Like getAccount, but returns an uninitialised User account if the address does not exist
-lookupAccount :: Address -> Blockchain Account
-lookupAccount addr = recover (const $ User uninitialised) (getAccount addr)
-
-setAccount :: Address -> Account -> Blockchain ()
-setAccount addr = setAccount' $ bytes addr
-
-updateAccount :: Address -> (Account -> Account) -> Blockchain ()
-updateAccount addr f = lookupAccount addr >>= setAccount addr . f
-
-updateAccountM :: Address -> (Account -> Blockchain Account) -> Blockchain ()
-updateAccountM addr f = do
-  acct <- lookupAccount addr
-  acct' <- f acct
-  setAccount addr acct'
-
-matchAccounts :: ByteString -> Blockchain [(ByteString, Account)]
-matchAccounts x = do
-  accts <- getAccounts
-  return . Map.toList $ Map.filterWithKey (\k _ -> B.isPrefixOf x k) accts
-
--- | Retrieve an account by address using the raw ByteString key
-getAccount' :: ByteString -> Blockchain Account
-getAccount' addr = getAccounts >>= \accts ->
-  case Map.lookup addr accts of
-    Just x  -> return x 
-    Nothing -> fail $ UnknownAccount addr
-
--- | Set an account by address using the raw ByteString key
-setAccount' :: ByteString -> Account -> Blockchain ()
-setAccount' addr acct = getAccounts >>= setAccounts . Map.insert addr acct
-
-
--- Balances
--- ---------------------------------------------------------------------
-
-getBalance :: Address -> Blockchain Value
-getBalance addr = do
-  acct <- getAccount addr
-  case acct of
-    Contract x _ _ -> return x
-    User x         -> return x
-
-lookupBalance :: Address -> Blockchain Value
-lookupBalance = withDefault uninitialised . getBalance
-
-setBalance :: Value -> Address -> Blockchain ()
-setBalance x addr = updateAccount addr $ \acct -> case acct of
-  Contract _ code storage -> Contract x code storage
-  User _                  -> User x
-
-updateBalance :: Address -> (Value -> Value) -> Blockchain ()
-updateBalance addr f = getBalance addr >>= setBalance addr . f
-
-creditAccount :: Value -> Address -> Blockchain ()
-creditAccount val addr = updateBalance addr (add val)
-
-debitAccount :: Value -> Address -> Blockchain ()
-debitAccount val addr = updateBalance addr (flip sub val)
-
-
--- Contracts
--- ---------------------------------------------------------------------
-
-getCode :: Address -> Blockchain Bytecode
-getCode addr = getAccount addr >>= \acct -> case acct of
-  Contract _ code _ -> return code
-  _                 -> fail $ NotAContract (toBytes addr)
-
-lookupCode :: Address -> Blockchain Bytecode
-lookupCode = withDefault mempty . getCode
-
-getStorage :: Address -> Blockchain StorageDB
-getStorage addr = getAccount addr >>= \acct -> case acct of
-  Contract _ _ x -> return x
-  _              -> fail $ NotAContract (toBytes addr)
-
-getStorage' :: Bytes a => a -> Blockchain StorageDB
-getStorage' a = getAccount' (toBytes a) >>= \acct -> case acct of
-  Contract _ _ x -> return x
-  _              -> fail $ NotAContract (toBytes a)
-
-getStorageAt :: Value -> Address -> Blockchain Value
-getStorageAt k addr = getStorage addr >>= return . Account.getStorageAt k
-
-getStorageAt' :: (Bytes k, Bytes a) => k -> a -> Blockchain Value
-getStorageAt' k a = getStorage' (toBytes a) >>= return . Account.getStorageAt' (toBytes k)
-
-setStorage :: Address -> StorageDB -> Blockchain ()
-setStorage addr storage = updateAccountM addr $ \acct -> case acct of
-  Contract balance code _ -> return $ Contract balance code storage
-  _                       -> fail $ NotAContract (toBytes addr)
-
-setStorageAt :: Value -> Value -> Address -> Blockchain ()
-setStorageAt k v addr = updateStorage addr $ Account.setStorageAt k v
-
-updateStorage :: Address -> (StorageDB -> StorageDB) -> Blockchain ()
-updateStorage addr f = getStorage addr >>= setStorage addr . f
-
-importContract :: Address -> Balance -> Bytecode -> StorageDB -> Blockchain ()
-importContract addr val code storage =
-  setAccount addr (Contract val code storage)
-
-
--- Monad state initialisation and access
--- ---------------------------------------------------------------------
-
-initState :: State
-initState = State
-  { stBlocks       = mempty
-  , stCurrentBlock = genesisBlock
-  , stAccounts     = mempty 
-  }
-
-getBlocks       = stBlocks       <$> getState
-getAccounts     = stAccounts     <$> getState
-getCurrentBlock = stCurrentBlock <$> getState
-
-setBlocks       x = updateState (\st -> st { stBlocks       = x }) :: Blockchain ()
-setCurrentBlock x = updateState (\st -> st { stCurrentBlock = x }) :: Blockchain ()
-setAccounts     x = updateState (\st -> st { stAccounts     = x }) :: Blockchain ()
-
 

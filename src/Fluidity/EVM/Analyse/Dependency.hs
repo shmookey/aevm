@@ -16,13 +16,15 @@ import qualified Fluidity.EVM.Data.Prov as P
 data Var
   = BlockNumber | BlockHash | BlockTime | Difficulty
   | GasPrice    | GasLimit  | Coinbase  | Address
-  | CallValue   | CallGas   | Balance   
+  | CallValue   | CallGas   | Balance   | Storage ByteString ByteString
   | PC          | GasLeft
   deriving (Show, Generic, NFData)
 
 data Expr
   = Lit ByteString
+  | Nul
   | Var Var
+  | Ext Var
   | Msg Int Int
   | Op2 P.BinOp Expr Expr
   | Op1 P.UnaOp Expr
@@ -63,6 +65,12 @@ convert pv = case pv of
     P.Balance   -> Var Balance
     P.CallData  -> Msg 0 (B.length bs)
 
+  P.Ext t bs -> case t of
+    P.CallValue   -> Ext CallValue
+    P.CallGas     -> Ext CallGas
+    P.Balance     -> Ext Balance
+    P.Storage k v -> Ext $ Storage k v
+
   P.UnaOp op bs a -> case convert a of
     Lit _ -> Lit bs
     a     -> Op1 op a
@@ -74,8 +82,10 @@ convert pv = case pv of
   P.MemOp P.SHA3 bs _ _ a ->
     SHA $ convert a
 
-  _ -> Lit (P.valueAt pv)
+  P.Nul -> Nul
 
+  _ -> Lit $ P.valueAt pv
+  --_ -> Lit (B.append (B.pack [0x0B, 0xAD]) $ P.valueAt pv)
 
 
 -- Classifiers
