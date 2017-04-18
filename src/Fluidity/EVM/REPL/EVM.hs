@@ -66,7 +66,7 @@ call addr value gas calldata = do
   caller <- getAddress
   callee <- uniqueAddress addr
   let msg = MessageCall
-              { msgCaller = caller
+              { msgCaller = setProv (Prov.Usr Prov.Caller $ toBytes caller) caller
               , msgCallee = mkAddress callee
               , msgValue  = value
               , msgGas    = gas

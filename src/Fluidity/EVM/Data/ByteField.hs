@@ -53,6 +53,7 @@ import Prelude hiding (head, drop, null, take)
 import Control.DeepSeq
 import GHC.Generics (Generic)
 import Data.ByteString (ByteString)
+import Data.Function (on)
 import Data.Word (Word8)
 import Data.Semigroup (Semigroup, (<>))
 import qualified Data.List as L
@@ -252,35 +253,29 @@ getBytesRaw i n = toBytes . slice i n
 -- | Get the read-provenance of a ByteField, unchanged if the provenance, length and offset of each byte is unchanged
 readProvenance :: ByteField -> Prov
 readProvenance bf = case map fuseGroup $ provGroups bf of
-  []                -> fst $ bfDefault bf
-  (bs, (0, p)) : [] -> SliceRead bs p
---                       if B.length bs < B.length (valueAt p)
---                       then SliceRead bs p
---                       else p
-  (bs, (o, p)) : [] -> TransRead bs o p
-  xs                -> DirtyRead (B.concat $ map fst xs) (map snd xs)
+  []     -> fst $ bfDefault bf
+  x : [] -> x
+  xs     -> Cat (toBytes bf) xs
 
--- | Unwraps a ByteField, taking the first non-null prov and (from the same byte) the lowest offset plus its index
-fuseGroup :: ByteField -> (ByteString, (Int, Prov))
-fuseGroup (ByteField xs dp) = 
+fuseGroup :: ByteField -> Prov
+fuseGroup bf@(ByteField (x:xs) _) =
   let
-    firstNonNul = L.findIndex ((/= Nul) . bpProv) xs
-    prov = case firstNonNul of
-      Just i  -> let b = L.head $ L.drop i xs
-                 in (bpOffset b + i, bpProv b)
-      Nothing -> (0, Nul)
+    p  = bpProv x
+    i  = bpOffset x
+    bs = toBytes bf
+    sz = size bf
+    n  = B.length $ valueAt p
   in
-    (B.pack $ L.map bpVal xs, prov)
+    if p == Nul     then Pad sz
+--    else if i == 0 && sz == 36 then error $ show (n, p)
+    else if n == sz then p
+    else                 Cut i sz bs p
 
--- | Split a ByteField into groups of same provenance, where the Nul provenance matches anything
 provGroups :: ByteField -> [ByteField]
-provGroups (ByteField bps dp) = 
-  let
-    sameProv b1 b2 = case (bpProv b1, bpProv b2) of
-      (Nul, _  ) -> True
-      (_  , Nul) -> True
-      (p1 , p2 ) -> p1 == p2
-  in
-    map (flip ByteField dp) $ L.groupBy sameProv bps
+provGroups (ByteField bps dp) = fst $ foldl accum ([], 0) groups
+  where 
+    groups           = L.groupBy ((==) `on` bpProv) bps
+    accum (acc, i) g = (repack i g : acc, i + length g)
+    repack i g       = ByteField g dp
 
 

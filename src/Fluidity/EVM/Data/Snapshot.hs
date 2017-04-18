@@ -78,7 +78,7 @@ instance RLP CodeDB where
       fromPair obj' = case obj' of
         RList [a, b] -> do k <- fromRLP a
                            v <- fromRLP b
-                           return (k, BF.fromByteString' (Prov.Ext Prov.Import) v)
+                           return (k, BF.fromByteString' (Prov.Ext Prov.Code) v)
     in case obj of
       RList xs -> CodeDB . Map.fromList <$> mapM fromPair xs
 

@@ -5,8 +5,9 @@ import GHC.Generics (Generic)
 import Control.DeepSeq
 import Data.ByteString (ByteString)
 
-import Text.Structured (Structured(fmt), (~~), (~-))
+import Text.Structured (Structured(fmt), (~~), (~-), toString)
 
+import Fluidity.Common.ANSI
 import Fluidity.Common.Binary
 import Fluidity.EVM.Analyse.Formula
 import Fluidity.EVM.Data.Format
@@ -35,23 +36,28 @@ instance Structured Event where
       in JumpI ~- fmtCodePtr jmp ~- path ~- x
 
     StorageRead p (k, ke) (v, ve) ->
-      SLoad ~- shortSmart 8 k ~- ">>" ~-
-      smart' v ~- "K={" ~- showExpr ke ~- 
-      "} V={" ~- showExpr ve ~- "}"
+      SLoad ~- shortSmart 8 k 
+            ~- ">>" ~- smart' v 
+            ~- "K=" ~~ emph "((" ~- showExpr ke ~- emph "))"
+            ~- "V=" ~~ emph "((" ~- showExpr ve ~- emph "))"
 
     StorageWrite p (k, ke) (v, ve) ->
-      SStore ~- shortSmart 8 k ~- "<<" ~- 
-      smart' v ~- "K={" ~- showExpr ke ~- 
-      "} V={" ~- showExpr ve ~- "}"
+      SStore ~- shortSmart 8 k 
+             ~- "<<" ~- smart' v
+             ~- "K=" ~~ emph "((" ~- showExpr ke ~- emph "))"
+             ~- "V=" ~~ emph "((" ~- showExpr ve ~- emph "))"
 
     MethodDetected x -> 
       "Callable method detected with hash:" ~- x
+
+
+showE = simplify . convert
 
 analyse :: VM.Interrupt -> Int -> [Event]
 analyse vi pc = case vi of
   VM.ConditionalJump cond ptr ->
     let
-      expr = simplify . convert $ prov cond
+      expr = showE $ prov cond
       cj = Branch pc (int ptr) (bool cond) (showExpr expr)
     in
       case matchMethodCall $ prov cond of
@@ -60,15 +66,15 @@ analyse vi pc = case vi of
 
   VM.StorageWrite k v ->
     let
-      ke = simplify . convert $ prov k
-      ve = simplify . convert $ prov v
+      ke = showE $ prov k
+      ve = showE $ prov v
     in
       return $ StorageWrite pc (bytes k, ke) (bytes v, ve)
 
   VM.StorageRead k v ->
     let
-      ke = simplify . convert $ prov k
-      ve = simplify . convert $ prov v
+      ke = showE $ prov k
+      ve = showE $ prov v
     in
       return $ StorageRead pc (bytes k, ke) (bytes v, ve)
 

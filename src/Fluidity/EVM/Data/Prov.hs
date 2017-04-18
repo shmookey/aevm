@@ -57,7 +57,12 @@ data Prov
   -- See the `ByteField` documentation for details
   | SliceRead ByteString Prov
   | TransRead ByteString Int Prov
-  | DirtyRead ByteString [(Int, Prov)]
+  | DirtyRead ByteString [(Int, ByteString, Prov)]
+
+  | Pad Int
+  | Cut Int Int ByteString Prov
+  | Cat ByteString [Prov]
+  | Fit ByteString Prov
 
   deriving (Eq, Show, Generic, NFData)
 
@@ -70,7 +75,7 @@ data Env
   deriving (Eq, Show, Generic, NFData)
 
 data Usr
-  = CallValue | CallGas | CallData | Balance | Code | Import | Storage ByteString ByteString
+  = Caller | CallValue | CallGas | CallData | Balance | Code | Import | Storage ByteString ByteString
   deriving (Eq, Show, Generic, NFData)
 
 data BinOp
@@ -99,5 +104,8 @@ valueAt pv = case pv of
   SliceRead bs _   -> bs
   TransRead bs _ _ -> bs
   DirtyRead bs _   -> bs
+  Cut _ _ bs _     -> bs
+  Cat bs _         -> bs
+  Fit bs _         -> bs
   Nul              -> mempty
   

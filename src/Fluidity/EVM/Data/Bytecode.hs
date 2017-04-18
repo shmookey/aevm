@@ -8,9 +8,10 @@ import Data.Word (Word8)
 
 import Control.Monad.Result
 
+import Fluidity.Common.Binary (toBytes)
 import Fluidity.EVM.Data.Value
 import Fluidity.EVM.Data.ByteField
-
+import qualified Fluidity.EVM.Data.Prov as Prov
 
 data Error
   = OutOfBounds Int Int 
@@ -30,8 +31,13 @@ getOp p bs =
 getData :: Int -> Int -> ByteField -> Result Error Value
 getData p n bs =
   if p >= 0 && p + n < size bs
-  then Ok . toValue $ slice p n bs
-  else Err EndOfInput
+  then 
+    let v = toValue $ slice p n bs
+    in Ok $
+      if n == 32 then v
+      else addProv (Prov.Fit $ toBytes v) v
+  else
+    Err EndOfInput
 
 
 data Op

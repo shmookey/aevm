@@ -7,7 +7,7 @@ import Data.Bits.ByteString ()
 import Data.Bits as I (complement, xor, (.&.), (.|.))
 
 import Fluidity.Common.Crypto (keccak256)
-import Fluidity.Common.Binary (roll, toBytes)
+import Fluidity.Common.Binary (roll, toBytes, toWord)
 import Fluidity.EVM.Data.ByteField as BF
 import Fluidity.EVM.Data.Value
 import Fluidity.EVM.Data.Prov
@@ -36,18 +36,18 @@ byte   a b = binop Byte a b . toInteger $ if int a < 32 then B.index (toBytes b)
 iszero   a = unaop IsZero a $ if bool a then 0 else 1
 bitnot   a = unaop Not a . roll . complement $ toBytes a
 size     m = unaop Size m . toInteger $ BF.size m
-sha3 a b m = memop SHA3 a b m . roll . keccak256 . toBytes $ fullslice (int a) (int b) m
+sha3 p n m = memop SHA3 p n m . roll . keccak256 . toBytes $ fullslice (int p) (int n) m
 
 
 -- Wrapping functions
 -- ---------------------------------------------------------------------
 
 unaop :: Provenance a => UnaOp -> a -> Integer -> Value
-unaop o a x = value x $ UnaOp o (toBytes x) (prov a)
+unaop o a x = value x $ UnaOp o (toWord 32 x) (prov a)
 
 binop :: BinOp -> Value -> Value -> Integer -> Value
-binop o a b x = value x $ BinOp o (toBytes x) (prov a) (prov b)
+binop o a b x = value x $ BinOp o (toWord 32 x) (prov a) (prov b)
 
 memop :: MemOp -> Value -> Value -> ByteField -> Integer -> Value
-memop o a b m x = value x $ MemOp o (toBytes x) (prov a) (prov b) (prov m)
+memop o a b m x = value x $ MemOp o (toWord 32 x) (prov a) (prov b) (prov m)
 

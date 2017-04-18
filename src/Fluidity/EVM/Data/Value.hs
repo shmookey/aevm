@@ -60,6 +60,12 @@ cloneWith f (Value x p) = Value (f x) p
 uninitialised :: Value
 uninitialised = Value 0 Nul
 
+addProv :: (Prov -> Prov) -> Value -> Value
+addProv f (Value x p) = Value x (f p)
+
+setProv :: Prov -> Value -> Value
+setProv p (Value x _) = Value x p
+
 
 -- Conversions
 -- ---------------------------------------------------------------------

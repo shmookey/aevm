@@ -28,3 +28,7 @@ colouringWheel = cycle $ map ((.) TS.toString)
         , f <- [colour, highlight]
   ]
 
+
+emph :: String -> String
+emph = TS.toString . embolden . highlight White
+
