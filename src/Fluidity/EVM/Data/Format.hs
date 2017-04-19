@@ -95,7 +95,7 @@ smartStub v =
   in
     if len == 20 -- probably an address
     then address x
-    else if len < 20
+    else if len < 20 && len /= 4
     then show $ roll x
     else if len == 32 || len == 31
     then stubRange v
