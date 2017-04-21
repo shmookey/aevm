@@ -12,13 +12,13 @@ import Text.Structured (Structured(fmt), (~-), (~~))
 import Fluidity.Common.Binary
 import Fluidity.EVM.Types
 import Fluidity.EVM.REPL.Monad
-import Fluidity.EVM.Blockchain (Block(..))
+import Fluidity.EVM.Core.Blockchain (Block(..))
 import Fluidity.EVM.Data.Account (Account(Account))
 import Fluidity.EVM.Data.Value
 import Fluidity.EVM.Data.Format (stub, currency)
 import qualified Fluidity.EVM.Data.Account as Acct
 import qualified Fluidity.EVM.Data.Format as Format
-import qualified Fluidity.EVM.Blockchain as Blockchain
+import qualified Fluidity.EVM.Core.Blockchain as Blockchain
 import qualified Fluidity.EVM.REPL.Command as Cmd
 
 

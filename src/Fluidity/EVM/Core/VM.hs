@@ -1,6 +1,6 @@
 -- | Core VM module for the Fluidity EVM.
 {-# LANGUAGE DeriveGeneric, DeriveAnyClass #-}
-module Fluidity.EVM.VM where
+module Fluidity.EVM.Core.VM where
 
 import Prelude hiding (LT, GT, Value, fail, div, mod, exp, and, or)
 import GHC.Generics (Generic)
@@ -16,20 +16,23 @@ import qualified Data.ByteString as B
 import Control.Monad.Combinator
 import Control.Monad.Result
 import Control.Monad.Resultant
-import Control.Monad.Execution
+import Control.Monad.Execution hiding (interrupt)
+import qualified Control.Monad.Execution as Exec
 
 import Fluidity.Common.Binary (roll, toBytes)
 import Fluidity.EVM.Data.Bytecode (Op(..))
 import Fluidity.EVM.Types hiding (Op(..))
-import Fluidity.EVM.Blockchain (Blockchain, storageAt, setStorageAt)
+import Fluidity.EVM.Core.Blockchain (Blockchain, storageAt, setStorageAt)
 import Fluidity.EVM.Data.ByteField hiding (size)
 import Fluidity.EVM.Data.Operations
 import Fluidity.EVM.Data.Prov (Prov(Sys, Nul), Sys(GasLeft))
 import Fluidity.EVM.Data.Transaction
 import Fluidity.EVM.Data.Value
+import Fluidity.EVM.Core.Interrupt (Interrupt, IntConf)
 import qualified Fluidity.EVM.Data.ByteField as BF
 import qualified Fluidity.EVM.Data.Bytecode as Bytecode
-import qualified Fluidity.EVM.Blockchain as Chain
+import qualified Fluidity.EVM.Core.Blockchain as Chain
+import qualified Fluidity.EVM.Core.Interrupt as INT
 
 
 -- Public exports
@@ -38,29 +41,15 @@ import qualified Fluidity.EVM.Blockchain as Chain
 type VM = Execution Blockchain Interrupt State Error
 
 data State = State
-  { stStatus :: Status
-  , stCall   :: MessageCall
-  , stPC     :: Int
-  , stCode   :: Bytecode
-  , stStack  :: Stack
-  , stMemory :: Memory
-  , stGas    :: Integer
+  { stStatus  :: Status
+  , stCall    :: MessageCall
+  , stPC      :: Int
+  , stCode    :: Bytecode
+  , stStack   :: Stack
+  , stMemory  :: Memory
+  , stGas     :: Integer
+  , stIntConf :: IntConf
   } deriving (Show, Generic, NFData)
-
-data Interrupt 
-  = BeginCycle Int
-  | NextCycle Int
-  | StorageRead Value Value
-  | StorageWrite Value Value
-  | Emit ByteField [Value]
-  | ExternalCall ExtCall
-  | ProgramLoad
-  | Stopped
-  | CallReturn ByteField
-  | JumpTo Value 
-  | ConditionalJump Value Value
-  | Alert String
-  deriving (Show, Generic, NFData)
 
 data Error
   = StackUnderflow
@@ -98,7 +87,7 @@ call = do
 
   setCode code
   setStatus Running
-  interrupt ProgramLoad
+  interrupt INT.Ready
   whileM_ isRunning step
   assertStatus Halt
 
@@ -119,7 +108,7 @@ step = do
   chargeGas
   perform op
   updatePC (+sz)
-  getPC  >>= interrupt . NextCycle
+  getPC  >>= interrupt . INT.Cycle
 
 -- | Is the VM in a running state?
 isRunning :: VM Bool
@@ -144,6 +133,11 @@ chargeGas = do
   then fail OutOfGas
   else return ()
 
+interrupt :: Interrupt -> VM ()
+interrupt x = do
+  ints <- getIntConf
+  when (INT.interruptible x ints) $ Exec.interrupt x
+
 
 -- Instruction actions
 -- ---------------------------------------------------------------------
@@ -151,7 +145,7 @@ chargeGas = do
 perform :: Op -> VM ()
 perform op = case op of
   -- Stop and arithmetic operations
-  Stop         -> setStatus Halt >> interrupt Stopped
+  Stop         -> setStatus Halt >> interrupt INT.Stop
   Add          -> pop2 >>= \(a, b) -> push $ a `add` b
   Mul          -> pop2 >>= \(a, b) -> push $ a `mul` b
   Div          -> pop2 >>= \(a, b) -> push $ a `div` b
@@ -199,8 +193,8 @@ perform op = case op of
   MStore       -> pop2 >>= \(p, x) -> getMemory >>= setMemory . setWord (int p) x
   MStore8      -> pop2 >>= \(p, x) -> getMemory >>= setMemory . setByte (int p) x
   MSize        -> getMemory >>= push . size
-  SLoad        -> (callee, pop) `to` \c i -> env (storageAt c i) >>= both_ push (interrupt . StorageRead i)
-  SStore       -> (callee, pop2) `to` \c (k, v) -> env (setStorageAt c k v) >> interrupt (StorageWrite k v)
+  SLoad        -> (callee, pop) `to` \c i -> env (storageAt c i) >>= both_ push (interrupt . INT.SLoad i)
+  SStore       -> (callee, pop2) `to` \c (k, v) -> env (setStorageAt c k v) >> interrupt (INT.SStore k v)
   Gas          -> getGas >>= push . valueFrom (Sys GasLeft)
   -- Push operations
   Push1  x     -> push x
@@ -270,14 +264,14 @@ perform op = case op of
   Swap15       -> swap 15
   Swap16       -> swap 16
   -- Logging operations
-  Log0         -> pop2i >>= \(p,n) -> getMemory >>= \m -> interrupt $ Emit (fullslice p n m) []
-  Log1         -> pop2i >>= \(p,n) -> getMemory >>= \m -> consume 1 >>= interrupt . Emit (fullslice p n m)
-  Log2         -> pop2i >>= \(p,n) -> getMemory >>= \m -> consume 2 >>= interrupt . Emit (fullslice p n m)
-  Log3         -> pop2i >>= \(p,n) -> getMemory >>= \m -> consume 3 >>= interrupt . Emit (fullslice p n m)
-  Log4         -> pop2i >>= \(p,n) -> getMemory >>= \m -> consume 4 >>= interrupt . Emit (fullslice p n m)
+  Log0         -> pop2i >>= \(p,n) -> getMemory >>= \m -> interrupt $ INT.Emit (fullslice p n m) []
+  Log1         -> pop2i >>= \(p,n) -> getMemory >>= \m -> consume 1 >>= interrupt . INT.Emit (fullslice p n m)
+  Log2         -> pop2i >>= \(p,n) -> getMemory >>= \m -> consume 2 >>= interrupt . INT.Emit (fullslice p n m)
+  Log3         -> pop2i >>= \(p,n) -> getMemory >>= \m -> consume 3 >>= interrupt . INT.Emit (fullslice p n m)
+  Log4         -> pop2i >>= \(p,n) -> getMemory >>= \m -> consume 4 >>= interrupt . INT.Emit (fullslice p n m)
   -- System operations
   Call         -> externalCall
-  Return       -> pop2i >>= \x -> getMemory >>= interrupt . CallReturn . uncurry fullslice x >> setStatus Halt
+  Return       -> pop2i >>= \x -> getMemory >>= interrupt . INT.Return . uncurry fullslice x >> setStatus Halt
   _            -> fail $ NotImplemented op
 
 -- | Swap the value at the head of the stack with the value at an index
@@ -295,7 +289,7 @@ jump = do
   let p = int ptr
   op  <- snd <$> opAt p
   case op of
-    JumpDest -> do interrupt $ JumpTo ptr
+    JumpDest -> do interrupt $ INT.Jump ptr
                    setPC p
     _        -> fail $ InvalidJump p
 
@@ -307,7 +301,7 @@ jumpi = do
   let p = int ptr
       c = int cond
   op   <- snd <$> opAt p
-  interrupt $ ConditionalJump cond ptr
+  interrupt $ INT.JumpI cond ptr
   when (c /= 0) $ case op of
     JumpDest -> setPC p
     _        -> fail $ InvalidJump p
@@ -320,7 +314,14 @@ externalCall = do
   (retp, retsz)  <- pop2
   updateGas $ \x -> x - uint gas
   callee >>= env . flip Chain.debit val . toBytes
-  interrupt $ ExternalCall  (gas, to, val, msgdata, retp, retsz)
+  interrupt INT.Call
+    { INT.cGas    = gas
+    , INT.cCallee = to
+    , INT.cValue  = val
+    , INT.cData   = msgdata
+    , INT.cRetP   = retp
+    , INT.cRetSz  = retsz
+    }
   push $ value 1 Nul
 
 
@@ -377,39 +378,43 @@ setStackIndex i x = do
 -- | The default initial state of the VM
 initState :: MessageCall -> State
 initState msg = State
-  { stStatus = Idle
-  , stPC     = 0
-  , stStack  = mempty
-  , stMemory = mempty
-  , stGas    = 0
-  , stCall   = msg
-  , stCode   = mempty
+  { stStatus  = Idle
+  , stPC      = 0
+  , stStack   = mempty
+  , stMemory  = mempty
+  , stGas     = 0
+  , stCall    = msg
+  , stCode    = mempty
+  , stIntConf = INT.defaults
   }
 
-getPC     = stPC      <$> getState
-getStack  = stStack   <$> getState
-getMemory = stMemory  <$> getState
-getStatus = stStatus  <$> getState
-getGas    = stGas     <$> getState
-getCall   = stCall    <$> getState
-getCode   = stCode    <$> getState
+getPC      = stPC      <$> getState
+getStack   = stStack   <$> getState
+getMemory  = stMemory  <$> getState
+getStatus  = stStatus  <$> getState
+getGas     = stGas     <$> getState
+getCall    = stCall    <$> getState
+getCode    = stCode    <$> getState
+getIntConf = stIntConf <$> getState
 
-caller    = msgCaller <$> getCall
-callee    = msgCallee <$> getCall
-callValue = msgValue  <$> getCall
-callGas   = msgGas    <$> getCall
-callData  = msgData   <$> getCall
+caller     = msgCaller <$> getCall
+callee     = msgCallee <$> getCall
+callValue  = msgValue  <$> getCall
+callGas    = msgGas    <$> getCall
+callData   = msgData   <$> getCall
 
-setPC     x = updateState (\st -> st { stPC     = x }) :: VM ()
-setStack  x = updateState (\st -> st { stStack  = x }) :: VM ()
-setMemory x = updateState (\st -> st { stMemory = x }) :: VM ()
-setStatus x = updateState (\st -> st { stStatus = x }) :: VM ()
-setGas    x = updateState (\st -> st { stGas    = x }) :: VM ()
-setCode   x = updateState (\st -> st { stCode   = x }) :: VM ()
+setPC      x = updateState (\st -> st { stPC      = x }) :: VM ()
+setStack   x = updateState (\st -> st { stStack   = x }) :: VM ()
+setMemory  x = updateState (\st -> st { stMemory  = x }) :: VM ()
+setStatus  x = updateState (\st -> st { stStatus  = x }) :: VM ()
+setGas     x = updateState (\st -> st { stGas     = x }) :: VM ()
+setCode    x = updateState (\st -> st { stCode    = x }) :: VM ()
+setIntConf x = updateState (\st -> st { stIntConf = x }) :: VM ()
 
-updatePC     f = getPC     >>= setPC     . f
-updateStack  f = getStack  >>= setStack  . f
-updateMemory f = getMemory >>= setMemory . f
-updateStatus f = getStatus >>= setStatus . f
-updateGas    f = getGas    >>= setGas    . f
+updatePC      f = getPC      >>= setPC      . f
+updateStack   f = getStack   >>= setStack   . f
+updateMemory  f = getMemory  >>= setMemory  . f
+updateStatus  f = getStatus  >>= setStatus  . f
+updateGas     f = getGas     >>= setGas     . f
+updateIntConf f = getIntConf >>= setIntConf . f
 

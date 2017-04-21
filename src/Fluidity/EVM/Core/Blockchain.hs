@@ -1,5 +1,5 @@
 {-# LANGUAGE DeriveGeneric, DeriveAnyClass #-}
-module Fluidity.EVM.Blockchain where
+module Fluidity.EVM.Core.Blockchain where
 
 import Prelude hiding (fail)
 import Data.Map (Map)

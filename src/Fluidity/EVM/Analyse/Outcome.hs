@@ -13,14 +13,15 @@ import Fluidity.EVM.Data.Transaction (MessageCall(..))
 import Fluidity.EVM.Data.Value (Value, uint)
 import Fluidity.EVM.Data.ByteField (ByteField)
 import Fluidity.EVM.Data.Bytecode (Op(Invalid))
-import qualified Fluidity.EVM.VM as VM
-import qualified Fluidity.EVM.Control as Control
+import qualified Fluidity.EVM.Core.VM as VM
+import qualified Fluidity.EVM.Core.Interrupt as INT
+import qualified Fluidity.EVM.Core.Control as Control
 
 
 -- | Information collected during a message call
 data CallReport = CallReport
   { crMessageCall :: MessageCall
-  , crInterrupts  :: [VM.Interrupt]
+  , crInterrupts  :: [INT.Interrupt]
   , crResult      :: Result Control.Error ()
   }
 
@@ -64,10 +65,10 @@ postMortem report =
     , pmGracefulHalt      = isGraceful causeOfDeath
     , pmNeedsImpl         = isNotImplemented causeOfDeath
     , pmProbableThrow     = isProbableThrow causeOfDeath
-    , pmWroteStorage      = any isStorageWrite interrupts
-    , pmReadStorage       = any isStorageRead interrupts
-    , pmSentFunds         = any isSendFunds interrupts
-    , pmMadeExtCall       = any isExternalCall interrupts
+    , pmWroteStorage      = any INT.isSStore interrupts
+    , pmReadStorage       = any INT.isSLoad  interrupts
+    , pmMadeExtCall       = any INT.isCall   interrupts
+    , pmSentFunds         = any isSendFunds  interrupts
 --    , pmCheckedGas        = 
 --    , pmReadSourceAddress = 
 --    , pmReadOwnAddress    = 
@@ -121,9 +122,9 @@ determineCauseOfDeath report =
   in
     case crResult report of
       Ok _ ->
-        case find isReturnData interrupts of
-          Just (VM.CallReturn x) -> Return x
-          Nothing                -> Stop
+        case find INT.isReturn interrupts of
+          Just (INT.Return x) -> Return x
+          Nothing             -> Stop
 
       Err (Control.VMError e) ->
         case e of
@@ -137,36 +138,10 @@ determineCauseOfDeath report =
       Err _ -> Other
 
 
--- Detectors
--- ---------------------------------------------------------------------
-
-isReturnData :: VM.Interrupt -> Bool
-isReturnData int = case int of
-  VM.CallReturn _ -> True
-  _               -> False
-
-isStorageWrite :: VM.Interrupt -> Bool
-isStorageWrite int = case int of
-  VM.StorageWrite _ _ -> True
-  _                   -> False
-
-isStorageRead :: VM.Interrupt -> Bool
-isStorageRead int = case int of
-  VM.StorageRead _ _ -> True
-  _                  -> False
-
-isExternalCall :: VM.Interrupt -> Bool
-isExternalCall int = case int of
-  VM.ExternalCall _  -> True
-  _                  -> False
-
-isSendFunds :: VM.Interrupt -> Bool
+isSendFunds :: INT.Interrupt -> Bool
 isSendFunds int = case int of
-  VM.ExternalCall (_, _, x, _, _, _) -> if uint x > 0 then True else False
-  _                                  -> False
-
-
-                          
+  INT.Call _ _ x _ _ _ -> if uint x > 0 then True else False
+  _                    -> False
 
 
 

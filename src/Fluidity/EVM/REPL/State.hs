@@ -5,7 +5,7 @@ import Data.Map as Map
 import Text.Structured (Structured(fmt), (~-), (~~))
 
 import Fluidity.EVM.REPL.Monad
-import qualified Fluidity.EVM.Control as Control
+import qualified Fluidity.EVM.Core.Control as Control
 import qualified Fluidity.EVM.REPL.Command as Cmd
 
 

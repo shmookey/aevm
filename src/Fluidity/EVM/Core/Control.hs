@@ -1,5 +1,5 @@
 {-# LANGUAGE DeriveGeneric, DeriveAnyClass #-}
-module Fluidity.EVM.Control where
+module Fluidity.EVM.Core.Control where
 
 import Prelude hiding (fail)
 import Data.Functor.Identity (Identity)
@@ -16,12 +16,13 @@ import Control.Monad.Interruptible ()
 import qualified Control.Monad.Execution as Execution
 
 import Fluidity.EVM.Data.Transaction
-import Fluidity.EVM.Blockchain (Blockchain)
-import Fluidity.EVM.VM (VM)
+import Fluidity.EVM.Core.Blockchain (Blockchain)
+import Fluidity.EVM.Core.VM (VM)
 import Fluidity.EVM.Data.Format as Format
 import qualified Fluidity.EVM.Analyse.Watchdog as Watchdog
-import qualified Fluidity.EVM.Blockchain as Blockchain
-import qualified Fluidity.EVM.VM as VM
+import qualified Fluidity.EVM.Core.Blockchain as Blockchain
+import qualified Fluidity.EVM.Core.VM as VM
+import qualified Fluidity.EVM.Core.Interrupt as INT
 
 
 type Control = Execution Identity Interrupt State Error
@@ -38,7 +39,7 @@ data State = State
   } deriving (Generic)
 
 data Interrupt
-  = VMInterrupt VM.Interrupt Int
+  = VMInterrupt INT.Interrupt Int
   | WatchdogEvent Watchdog.Event
   | CheckpointSaved Int String
   | CallSucceeded
@@ -55,7 +56,7 @@ data Error
   | BlockchainError Blockchain.Error
   | VMError VM.Error
   | InvalidCheckpoint Int
-  | UnexpectedInterrupt VM.Interrupt
+  | UnexpectedInterrupt INT.Interrupt
   | NotExecutingCall
   | CallInProgress
   | NoCallInProgress
@@ -92,7 +93,7 @@ breakAt x = setRunMode (Until x) >> resume
 -- ---------------------------------------------------------------------
 
 -- | Respond to a VM interrupt, updating the call stack with the new VM state
-handleInterrupt :: VM.Interrupt -> VM.State -> Control Bool
+handleInterrupt :: INT.Interrupt -> VM.State -> Control Bool
 handleInterrupt ev st = do
   updateVMState st
   breaking   <- atBreakpoint ev
@@ -110,26 +111,25 @@ handleInterrupt ev st = do
     else return ()
 
     case ev of
-      VM.ProgramLoad -> do
-        i <- saveCheckpoint "Program Load"
-        interrupt $ CheckpointSaved i "Program load"
+      INT.Ready -> do
+        i <- saveCheckpoint "Ready"
+        interrupt $ CheckpointSaved i "Ready"
         return True
 
       _ -> return True
 
-isCycle :: VM.Interrupt -> Bool
+isCycle :: INT.Interrupt -> Bool
 isCycle ev = case ev of
-  VM.NextCycle _  -> True
-  VM.BeginCycle _ -> True
-  _               -> False
+  INT.Cycle _  -> True
+  _            -> False
 
-atBreakpoint :: VM.Interrupt -> Control Bool
+atBreakpoint :: INT.Interrupt -> Control Bool
 atBreakpoint ev = do
   mode <- getRunMode
   return $ case (mode, ev) of
-    (Step, VM.NextCycle _)    -> True
-    (Until a, VM.NextCycle b) -> a == b
-    _                         -> False
+    (Step,    INT.Cycle _) -> True
+    (Until a, INT.Cycle b) -> a == b
+    _                      -> False
 
 
 -- Call stack

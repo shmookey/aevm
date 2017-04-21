@@ -25,9 +25,9 @@ import qualified Text.Structured as TS
 
 import Fluidity.Common.Binary
 import Fluidity.Common.ANSI
-import Fluidity.EVM.Blockchain (Blockchain)
-import Fluidity.EVM.Control (Control)
-import Fluidity.EVM.VM (VM)
+import Fluidity.EVM.Core.Blockchain (Blockchain)
+import Fluidity.EVM.Core.Control (Control)
+import Fluidity.EVM.Core.VM (VM)
 import Fluidity.EVM.Types
 import Fluidity.EVM.Text (formatExternalCall)
 import Fluidity.EVM.Data.Account
@@ -40,10 +40,11 @@ import qualified Fluidity.EVM.Data.Snapshot as Snapshot
 import qualified Fluidity.EVM.Parallel as Parallel
 import qualified Fluidity.EVM.REPL.Command as Cmd
 import qualified Fluidity.EVM.REPL.Parser as Parser
-import qualified Fluidity.EVM.Blockchain as Blockchain
-import qualified Fluidity.EVM.Control as Control
+import qualified Fluidity.EVM.Core.Blockchain as Blockchain
+import qualified Fluidity.EVM.Core.Control as Control
 import qualified Fluidity.EVM.Data.Bytecode as Bytecode
-import qualified Fluidity.EVM.VM as VM
+import qualified Fluidity.EVM.Core.VM as VM
+import qualified Fluidity.EVM.Core.Interrupt as INT
 
 
 type REPL = ResultantT (InputT IO) State Error
@@ -186,13 +187,12 @@ handleInterrupt int st = do
       return True
 
 -- | Handle a proxied interrupt from the active VM
-handleVMInterrupt :: VM.Interrupt -> Int -> REPL ()
+handleVMInterrupt :: INT.Interrupt -> Int -> REPL ()
 handleVMInterrupt int pc = case int of
-  VM.StorageRead k v     -> return () --log "SLOAD"
-  VM.StorageWrite k v    -> return () --log "SSTORE"
-  VM.ConditionalJump _ _ -> return ()
-  VM.ExternalCall x      -> printInterrupt pc $ formatExternalCall x
-  VM.BeginCycle _        -> return ()
+  INT.SLoad  k v         -> return () --log "SLOAD"
+  INT.SStore k v         -> return () --log "SSTORE"
+  INT.JumpI  _ _         -> return ()
+  INT.Call   a b c d e f -> printInterrupt pc $ formatExternalCall a b c d e f
   _                      -> printInterrupt pc int -- return ()
 
 printInterrupt :: TS.Structured a => Int -> a -> REPL ()

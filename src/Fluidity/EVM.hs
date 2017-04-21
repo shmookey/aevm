@@ -26,7 +26,7 @@ import Fluidity.EVM.Data.Prov (Prov(Env, Ext), Usr(Code))
 import Fluidity.EVM.Data.Import (Import)
 import Fluidity.EVM.Data.Snapshot (Snap)
 import qualified Fluidity.EVM.Data.Bytecode as Bytecode
-import qualified Fluidity.EVM.VM as VM
+import qualified Fluidity.EVM.Core.VM as VM
 import qualified Fluidity.EVM.Data.Import as Import
 import qualified Fluidity.EVM.Data.Snapshot as Snapshot
 import qualified Fluidity.EVM.REPL as REPL

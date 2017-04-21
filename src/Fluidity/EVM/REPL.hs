@@ -38,21 +38,21 @@ import qualified Text.Structured as TS
 import Confound.Methods (encodeCall)
 import Fluidity.Common.Binary (unroll)
 import Fluidity.Common.ANSI
-import Fluidity.EVM.Blockchain (Blockchain)
+import Fluidity.EVM.Core.Blockchain (Blockchain)
 import Fluidity.EVM.Data.Account
-import Fluidity.EVM.Control (Control)
+import Fluidity.EVM.Core.Control (Control)
 import Fluidity.EVM.Data.Value (Value, uint)
 import Fluidity.EVM.Text ()
 import Fluidity.EVM.Types
 import Fluidity.EVM.Data.Bytecode (Op)
-import Fluidity.EVM.VM (VM)
+import Fluidity.EVM.Core.VM (VM)
 import qualified Fluidity.EVM.Data.Format as Format
 import qualified Fluidity.EVM.Data.ByteField as ByteField
-import qualified Fluidity.EVM.Blockchain as Blockchain
-import qualified Fluidity.EVM.Control as Control
+import qualified Fluidity.EVM.Core.Blockchain as Blockchain
+import qualified Fluidity.EVM.Core.Control as Control
 import qualified Fluidity.EVM.Data.Bytecode as Bytecode
 import qualified Fluidity.EVM.Data.Snapshot as Snapshot
-import qualified Fluidity.EVM.VM as VM
+import qualified Fluidity.EVM.Core.VM as VM
 
 import Fluidity.EVM.REPL.Monad hiding (REPL, Error)
 import qualified Fluidity.EVM.REPL.Monad

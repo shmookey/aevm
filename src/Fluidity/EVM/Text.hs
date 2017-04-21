@@ -26,11 +26,13 @@ import Fluidity.EVM.Data.Format
 import Fluidity.EVM.Data.Transaction
 import Fluidity.EVM.Data.Value
 import Fluidity.EVM.Types
-import Fluidity.EVM.VM (VM)
+import Fluidity.EVM.Core.VM (VM)
+import Fluidity.EVM.Core.Interrupt (Interrupt)
 import Fluidity.EVM.Data.Account
 import Fluidity.EVM.Data.Bytecode
-import Fluidity.EVM.Blockchain
-import qualified Fluidity.EVM.VM as VM
+import Fluidity.EVM.Core.Blockchain
+import qualified Fluidity.EVM.Core.VM as VM
+import qualified Fluidity.EVM.Core.Interrupt as INT
 
 instance Structured MessageCall where
   fmt (MessageCall caller callee value gas bytes) = 
@@ -38,18 +40,14 @@ instance Structured MessageCall where
    ~- "=>" ~- "[" ~~ stubAddress callee ~~ "]"
    ~- currency value ~- uint gas ~- toHexS bytes
 
-instance Structured VM.Interrupt where
+instance Structured Interrupt where
   fmt int = case int of 
-    VM.ConditionalJump c p -> JumpI ~- boolean c ~- toHexShort p
-    VM.JumpTo p            -> Jump ~- toHexShort p
-    VM.Emit bf v           -> let op = case length v of 0 -> Log0
-                                                        1 -> Log1
-                                                        2 -> Log2
-                                                        3 -> Log3
-                                                        4 -> Log4
-                              in op ~- abbreviated 12 (toBytes bf) ~-  phrase (map smart v)
-    VM.Stopped             -> fmt Stop
-    _                      -> fmt $ show int
+    INT.JumpI c p -> JumpI ~- boolean c ~- toHexShort p
+    INT.Jump p    -> Jump ~- toHexShort p
+    INT.Emit bf v -> let op = case length v of { 0 -> Log0 ; 1 -> Log1 ; 2 -> Log2 ; 3 -> Log3 ; 4 -> Log4 }
+                     in op ~- abbreviated 12 (toBytes bf) ~-  phrase (map smart v)
+    INT.Stop      -> fmt Stop
+    _             -> fmt $ show int
 
 formatStorage :: StorageDB -> String
 formatStorage = Prelude.unlines . map f . storageEntriesDB
@@ -57,8 +55,7 @@ formatStorage = Prelude.unlines . map f . storageEntriesDB
                ++ toHexS v ++ " " 
                ++ show (uint v)
 
-formatExternalCall :: ExtCall -> String
-formatExternalCall (gas, addr, balance, cdata, mptr, retsz) = T.unpack .
+formatExternalCall gas addr balance cdata mptr retsz = T.unpack .
   typeset $ Call ~- stubAddress addr ~- currency balance ~- uint gas ~- toHexS cdata ~- uint retsz
 
 instance Structured Op where

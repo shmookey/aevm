@@ -33,7 +33,7 @@ import Fluidity.EVM.Data.Value hiding (asAddress)
 import qualified Fluidity.Common.RLP as RLP
 import qualified Fluidity.EVM.Data.Prov as Prov
 import qualified Fluidity.EVM.Data.ByteField as BF
-import qualified Fluidity.EVM.Blockchain as Blockchain
+import qualified Fluidity.EVM.Core.Blockchain as Blockchain
 
 
 type Snap = ResultantT IO State Error

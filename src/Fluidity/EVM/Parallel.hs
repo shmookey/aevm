@@ -12,17 +12,18 @@ import Control.Monad.Result
 import Control.Monad.Resultant
 import qualified Control.Monad.Execution as Execution
 
-import Fluidity.EVM.Control (Control)
+import Fluidity.EVM.Core.Control (Control)
 import Fluidity.EVM.Types
 import Fluidity.EVM.Data.Value
 import Fluidity.EVM.Data.Transaction (MessageCall(..))
 import Fluidity.EVM.Analyse.Outcome (CallReport(CallReport), PostMortem)
-import qualified Fluidity.EVM.Control as Control
+import qualified Fluidity.EVM.Core.Control as Control
 import qualified Fluidity.EVM.Analyse.Outcome as Outcome
-import qualified Fluidity.EVM.VM as VM
+import qualified Fluidity.EVM.Core.VM as VM
+import qualified Fluidity.EVM.Core.Interrupt as INT
 
 
-type Task a = Resultant [VM.Interrupt] Control.Error a
+type Task a = Resultant [INT.Interrupt] Control.Error a
 
 data Report = Report [Control.Interrupt] (Result Control.Error ())
   deriving (Show, Generic, NFData)
@@ -41,7 +42,7 @@ multicall calls =
       , Control.stAnalyticMode  = True
       }
 
-    process :: MessageCall -> ([VM.Interrupt], Control.State, Result Control.Error ()) -> (ByteString, PostMortem, Control.State)
+    process :: MessageCall -> ([INT.Interrupt], Control.State, Result Control.Error ()) -> (ByteString, PostMortem, Control.State)
     process msg (ints, st, result) =
       (bytes $ msgCallee msg, Outcome.postMortem (CallReport msg ints result), st)
 
@@ -58,7 +59,7 @@ multicall calls =
 -- Base parallelisation functionality
 -- ---------------------------------------------------------------------
 
-runTask :: Task (Control.State, Result Control.Error a) -> ([VM.Interrupt], Control.State, Result Control.Error a)
+runTask :: Task (Control.State, Result Control.Error a) -> ([INT.Interrupt], Control.State, Result Control.Error a)
 runTask task = case runResultant task [] of
   (ints, Ok (st, r)) -> (ints, st, r)
 

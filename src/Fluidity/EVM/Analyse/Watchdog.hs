@@ -16,7 +16,9 @@ import Fluidity.EVM.Data.Prov
 import Fluidity.EVM.Data.Value
 import Fluidity.EVM.Data.Bytecode (Op(..))
 import Fluidity.EVM.Text ()
-import qualified Fluidity.EVM.VM as VM
+import Fluidity.EVM.Core.Interrupt (Interrupt)
+import qualified Fluidity.EVM.Core.VM as VM
+import qualified Fluidity.EVM.Core.Interrupt as INT
 
 
 data Event
@@ -53,9 +55,9 @@ instance Structured Event where
 
 showE = simplify . convert
 
-analyse :: VM.Interrupt -> Int -> [Event]
+analyse :: Interrupt -> Int -> [Event]
 analyse vi pc = case vi of
-  VM.ConditionalJump cond ptr ->
+  INT.JumpI cond ptr ->
     let
       expr = showE $ prov cond
       cj = Branch pc (int ptr) (bool cond) (showExpr expr)
@@ -64,14 +66,14 @@ analyse vi pc = case vi of
         Just x -> [cj, MethodDetected $ "0x" ++ toHex x]
         Nothing -> [cj]
 
-  VM.StorageWrite k v ->
+  INT.SStore k v ->
     let
       ke = showE $ prov k
       ve = showE $ prov v
     in
       return $ StorageWrite pc (bytes k, ke) (bytes v, ve)
 
-  VM.StorageRead k v ->
+  INT.SLoad k v ->
     let
       ke = showE $ prov k
       ve = showE $ prov v

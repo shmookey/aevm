@@ -30,11 +30,11 @@ import qualified Fluidity.EVM.Data.ByteField as BF
 import qualified Fluidity.EVM.Data.Prov as Prov
 import qualified Fluidity.EVM.Analyse.Outcome as Outcome
 import qualified Fluidity.EVM.Analyse.Formula as Formula
-import qualified Fluidity.EVM.Blockchain as Blockchain
+import qualified Fluidity.EVM.Core.Blockchain as Blockchain
 import qualified Fluidity.EVM.Parallel as Parallel
-import qualified Fluidity.EVM.Control as Control
+import qualified Fluidity.EVM.Core.Control as Control
 import qualified Fluidity.EVM.REPL.Command as Cmd
-import qualified Fluidity.EVM.VM as VM
+import qualified Fluidity.EVM.Core.VM as VM
 import qualified Fluidity.EVM.Data.Format as Format
 
 

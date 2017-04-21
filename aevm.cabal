@@ -25,6 +25,10 @@ library
                      , Fluidity.EVM.Analyse.Formula
                      , Fluidity.EVM.Analyse.Outcome
                      , Fluidity.EVM.Analyse.Watchdog
+                     , Fluidity.EVM.Core.Blockchain
+                     , Fluidity.EVM.Core.Control
+                     , Fluidity.EVM.Core.Interrupt
+                     , Fluidity.EVM.Core.VM
                      , Fluidity.EVM.Data.Account
                      , Fluidity.EVM.Data.Bytecode
                      , Fluidity.EVM.Data.ByteField
@@ -46,12 +50,9 @@ library
                      , Fluidity.EVM.REPL.Parallel
                      , Fluidity.EVM.REPL.Parser
                      , Fluidity.EVM.REPL.State
-                     , Fluidity.EVM.Blockchain
-                     , Fluidity.EVM.Control
                      , Fluidity.EVM.Parallel
                      , Fluidity.EVM.Text
                      , Fluidity.EVM.Types
-                     , Fluidity.EVM.VM
                      , Confound.Methods
                      , Confound.Types
                      , Confound.Util
