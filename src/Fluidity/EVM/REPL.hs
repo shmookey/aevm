@@ -53,6 +53,7 @@ import qualified Fluidity.EVM.Core.Control as Control
 import qualified Fluidity.EVM.Data.Bytecode as Bytecode
 import qualified Fluidity.EVM.Data.Snapshot as Snapshot
 import qualified Fluidity.EVM.Core.VM as VM
+import qualified Fluidity.EVM.Core.System as Sys
 
 import Fluidity.EVM.REPL.Monad hiding (REPL, Error)
 import qualified Fluidity.EVM.REPL.Monad
@@ -89,7 +90,7 @@ instance Structured Error where
 
 instance Structured Control.Error where
   fmt err = case err of
-    Control.VMError e -> fmt e
+    Control.SysError e -> fmt $ show e
     _                 -> "Control error:" ~- show err
 
 instance Structured Bytecode.Error where
@@ -142,7 +143,7 @@ loadSnapshot name = do
   dataDir <- getDataDir
   result  <- safely $ rdo (Snapshot.loadSnapshot name) (Snapshot.State dataDir)
   chain   <- subpoint result 
-  mutate $ Control.setBlockchain chain
+  mutateBlockchain $ setState chain
 
 run :: REPL () -> IO (Result Error ())
 run ma = HL.runInputT settings . HL.handleInterrupt onCtrlC . HL.withInterrupt $ rdo ma initState
@@ -163,18 +164,18 @@ haskeline ma = safely . HL.runInputT settings $ HL.withInterrupt ma
       }
 
 getPrompt :: REPL String
-getPrompt = query Control.isInCall >>= \c ->
-  if not c
-  then return "aevm> "
+getPrompt = withDefault "aevm(error)>" $ do
+  c <- query Control.running
+  if not c then return "aevm> "
   else do
-  pc       <- queryVM VM.getPC
-  stackLen <- length         <$> queryVM VM.getStack
-  memorySz <- ByteField.size <$> queryVM VM.getMemory
-  op       <- snd            <$> queryVM VM.nextOp
-  return . unpack . typeset 
-    $ Format.codeptr pc
-   ~- stackLen ~~ "/" ~~ memorySz
-   ~- op
-   ~- ">>> "
+    pc       <- queryVM VM.getPC
+    stackLen <- length         <$> queryVM VM.getStack
+    memorySz <- ByteField.size <$> queryVM VM.getMemory
+    op       <- snd            <$> queryVM VM.nextOp
+    return . unpack . typeset 
+      $ Format.codeptr pc
+     ~- stackLen ~~ "/" ~~ memorySz
+     ~- op
+     ~- ">>> "
 
 

@@ -6,7 +6,7 @@ import Data.ByteString.Char8 (ByteString)
 import Data.List (intercalate)
 import Data.Functor.Identity (Identity)
 import Data.Semigroup ((<>))
-import Text.Parsec ((<?>))
+import Text.Parsec (sepBy, (<?>))
 import qualified Text.Parsec.Char as PC
 import qualified Text.Parsec as P
 
@@ -18,7 +18,11 @@ import Fluidity.EVM.Data.ByteField (ByteField, fromByteString)
 import Fluidity.EVM.Data.Value
 import Fluidity.EVM.Data.Prov (Prov(Usr))
 import Fluidity.EVM.REPL.Command
+import Fluidity.EVM.Core.Interrupt (IntType)
+import Fluidity.EVM.Core.System (InterruptAction, InterruptPoint)
 import qualified Fluidity.EVM.Data.Prov as Prov
+import qualified Fluidity.EVM.Core.Interrupt as INT
+import qualified Fluidity.EVM.Core.System as Sys
 import qualified Fluidity.EVM.Data.ByteField as BF
 
 
@@ -50,6 +54,7 @@ command = P.choice
   , Monitor  <$> cmdMonitor
   , Parallel <$> cmdPar
   , State    <$> cmdState
+  , Walk     <$> cmdWalk
   ] <* P.eof
 
 
@@ -73,12 +78,62 @@ cmdEVM =
              return $ InspectCode ref
         ]
 
+    cmdInterrupt :: Parse Interrupt
+    cmdInterrupt = do
+      keyword "interrupt"
+      space
+      P.choice
+        [ const InterruptShow <$> keyword "show" 
+        , do keyword "off"
+             space
+             xs <- interruptType `sepBy` space
+             return . InterruptOff $ concat xs
+        , do keyword "on"
+             space
+             xs <- interruptType `sepBy` space
+             return . InterruptOn $ concat xs
+        , do keyword "action"
+             space
+             InterruptAction <$> interruptAction
+        , do keyword "point"
+             space
+             InterruptPoint <$> interruptPoint
+        ]
+
+    interruptType :: Parse [IntType]
+    interruptType = P.choice $ map (\(k,v) -> const v <$> keyword k) intTypes
+      where intTypes = [ ( "call"  , [INT.ICall]   )
+                       , ( "cycle" , [INT.ICycle]  )
+                       , ( "emit"  , [INT.IEmit]   )
+                       , ( "jump"  , [INT.IJump]   )
+                       , ( "jumpi" , [INT.IJumpI]  )
+                       , ( "ready" , [INT.IReady]  )
+                       , ( "return", [INT.IReturn] )
+                       , ( "sload" , [INT.ISLoad]  )
+                       , ( "sstore", [INT.ISStore] )
+                       , ( "stop"  , [INT.IStop]   )
+                       , ( "all"   , INT.intTypes  ) ]
+
+    interruptAction :: Parse InterruptAction
+    interruptAction = P.choice $ map (\(k,v) -> const v <$> keyword k) actTypes
+      where actTypes = [ ("break",  Sys.Break)
+                       , ("echo",   Sys.Echo)
+                       , ("ignore", Sys.Ignore) ]
+
+    interruptPoint :: Parse InterruptPoint
+    interruptPoint = P.choice $ map (\(k,v) -> const v <$> keyword k) ptTypes
+      where ptTypes = [ ("immediate", Sys.Immediate)
+                      , ("finalize",  Sys.Finalize)
+                      , ("preempt",   Sys.Preempt) ]
+
   in do
     keyword "evm"
     space
     P.choice
-      [ const Go   <$> keyword "go"
-      , const Step <$> keyword "step"
+      [ const Go    <$> keyword "go"
+      , const Step  <$> keyword "step"
+      , const Paths <$> keyword "paths"
+      , const Abort <$> keyword "abort"
       , do keyword "breakat"
            space
            x <- integer
@@ -92,7 +147,8 @@ cmdEVM =
            cdata <- P.option defaultCallData (space >> callData)
            return $ Call addr val gas cdata
 
-      , Inspect <$> cmdInspect
+      , Inspect   <$> cmdInspect
+      , Interrupt <$> cmdInterrupt
       ]
 
 
@@ -133,6 +189,20 @@ cmdPar = do
             ]
     ]
 
+
+-- Walk commands
+-- ---------------------------------------------------------------------
+
+cmdWalk :: Parse Walk
+cmdWalk = do
+  keyword "walk"
+  space
+  P.choice
+    [ do keyword "match"
+         space
+         x <- address
+         return $ WalkMatch x
+    ]
 
 -- State commands
 -- ---------------------------------------------------------------------

@@ -28,6 +28,7 @@ import Fluidity.Common.ANSI
 import Fluidity.EVM.Core.Blockchain (Blockchain)
 import Fluidity.EVM.Core.Control (Control)
 import Fluidity.EVM.Core.VM (VM)
+import Fluidity.EVM.Core.System (Sys)
 import Fluidity.EVM.Types
 import Fluidity.EVM.Text (formatExternalCall)
 import Fluidity.EVM.Data.Account
@@ -44,6 +45,7 @@ import qualified Fluidity.EVM.Core.Blockchain as Blockchain
 import qualified Fluidity.EVM.Core.Control as Control
 import qualified Fluidity.EVM.Data.Bytecode as Bytecode
 import qualified Fluidity.EVM.Core.VM as VM
+import qualified Fluidity.EVM.Core.System as Sys
 import qualified Fluidity.EVM.Core.Interrupt as INT
 
 
@@ -104,15 +106,15 @@ initState =
 -- | Run an interruptible Control computation until it yields
 yield :: Control a -> REPL ()
 yield task = do
-  (st, r) <- getControlState >>= Execution.executeR
+  (st, r) <- getControlState >>= Execution.execute
     task
     runControl
     handleInterrupt
 
   setControlState st
   case r of
-    Left cont     -> return ()
-    Right (Ok _)  -> return ()
+    Left (x, _)   -> putStrLn $ "Suspended by interrupt: " ++ show x
+    Right (Ok _)  -> putStrLn "Done"
     Right (Err e) -> fail $ ControlError e
 
 -- | Run a Control computation without interrupts, discarding the final state
@@ -136,21 +138,14 @@ mutate task = do
   return x
 
 runControl :: Identity a -> REPL a
-runControl ma =
-  return $ runIdentity ma
+runControl ma = return $ runIdentity ma
 
--- | Like `query`, but for the active VM context
-queryVM :: VM a -> REPL a
-queryVM = query . Control.query
-
--- | Like `mutate`, but for the active VM context
-mutateVM :: VM a -> REPL a
-mutateVM = mutate . Control.mutate
-
-queryBlockchain :: Blockchain a -> REPL a
-queryBlockchain = query . Control.queryBlockchain
-
-mutateBlockchain :: Blockchain a -> REPL a
+-- Control passthrough
+querySys         = query  . Control.query
+mutateSys        = mutate . Control.mutate
+queryVM          = query  . Control.queryVM
+mutateVM         = mutate . Control.mutateVM
+queryBlockchain  = query  . Control.queryBlockchain
 mutateBlockchain = mutate . Control.mutateBlockchain
 
 {- Interrupt handlers
@@ -161,39 +156,17 @@ mutateBlockchain = mutate . Control.mutateBlockchain
 -}
 
 -- | Handle a Control interrupt generated while yielding control
-handleInterrupt :: Control.Interrupt -> Control.State -> REPL Bool
+handleInterrupt :: Control.Interrupt -> Control.State -> REPL (Maybe Control.Interrupt)
 handleInterrupt int st = do
   setControlState st
   pc <- queryVM VM.getPC
   case int of
-    Control.VMInterrupt x _ -> do
-      handleVMInterrupt x pc
-      return True
-
-    Control.WatchdogEvent x -> do
-      printInterrupt pc x
-      return True
-
-    Control.CallSucceeded -> do
-      printLn $ colour Green "The call completed successfully."
-      return True
-
-    Control.CheckpointSaved i x -> do
-      printInterrupt pc $ "An automatic state snapshot was saved: #" ++ show i ++ " " ++ x
-      return True
-
-    _ -> do
-      putStrLn $ "Unknown interrupt: " ++ (show int)
-      return True
-
--- | Handle a proxied interrupt from the active VM
-handleVMInterrupt :: INT.Interrupt -> Int -> REPL ()
-handleVMInterrupt int pc = case int of
-  INT.SLoad  k v         -> return () --log "SLOAD"
-  INT.SStore k v         -> return () --log "SSTORE"
-  INT.JumpI  _ _         -> return ()
-  INT.Call   a b c d e f -> printInterrupt pc $ formatExternalCall a b c d e f
-  _                      -> printInterrupt pc int -- return ()
+    Control.SysInterrupt x      -> printInterrupt pc x
+    Control.WatchdogEvent x     -> printInterrupt pc x
+    Control.CallSucceeded       -> printLn $ colour Green "The call completed successfully."
+    Control.CheckpointSaved i x -> printInterrupt pc $ "Saved checkpoint #" ++ show i ++ " " ++ x
+    _                           -> putStrLn $ "Unknown interrupt: " ++ (show int)
+  return Nothing
 
 printInterrupt :: TS.Structured a => Int -> a -> REPL ()
 printInterrupt pc x = printLn $ fmtCodePtr pc ~- x

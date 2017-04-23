@@ -27,7 +27,7 @@ import Fluidity.EVM.Data.Transaction
 import Fluidity.EVM.Data.Value
 import Fluidity.EVM.Types
 import Fluidity.EVM.Core.VM (VM)
-import Fluidity.EVM.Core.Interrupt (Interrupt)
+import Fluidity.EVM.Core.Interrupt (Interrupt, IntType)
 import Fluidity.EVM.Data.Account
 import Fluidity.EVM.Data.Bytecode
 import Fluidity.EVM.Core.Blockchain
@@ -48,6 +48,12 @@ instance Structured Interrupt where
                      in op ~- abbreviated 12 (toBytes bf) ~-  phrase (map smart v)
     INT.Stop      -> fmt Stop
     _             -> fmt $ show int
+
+formatInterrupt :: Interrupt -> String
+formatInterrupt = formatIntType . INT.intType
+
+formatIntType :: IntType -> String
+formatIntType = toString . highlight Red . tail . show
 
 formatStorage :: StorageDB -> String
 formatStorage = Prelude.unlines . map f . storageEntriesDB

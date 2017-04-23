@@ -16,7 +16,7 @@ import qualified Fluidity.EVM.Data.Prov as Prov
 data Error
   = OutOfBounds Int Int 
   | EndOfInput
-  deriving (Show, Generic, NFData)
+  deriving (Eq, Show, Generic, NFData)
 
 
 getOp :: Int -> ByteField -> Result Error (Int, Op)

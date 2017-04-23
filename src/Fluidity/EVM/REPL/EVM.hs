@@ -26,6 +26,7 @@ import Fluidity.EVM.Data.Format (stub)
 import Fluidity.EVM.Data.Transaction (MessageCall(..))
 import Fluidity.EVM.Analyse.Outcome (PostMortem)
 import Fluidity.EVM.Text ()
+import qualified Fluidity.EVM.Analyse.Pathfinder as Pathfinder
 import qualified Fluidity.EVM.Data.ByteField as BF
 import qualified Fluidity.EVM.Data.Prov as Prov
 import qualified Fluidity.EVM.Analyse.Outcome as Outcome
@@ -35,6 +36,8 @@ import qualified Fluidity.EVM.Parallel as Parallel
 import qualified Fluidity.EVM.Core.Control as Control
 import qualified Fluidity.EVM.REPL.Command as Cmd
 import qualified Fluidity.EVM.Core.VM as VM
+import qualified Fluidity.EVM.Core.System as Sys
+import qualified Fluidity.EVM.Core.Interrupt as INT
 import qualified Fluidity.EVM.Data.Format as Format
 
 
@@ -43,23 +46,34 @@ runCommand cmd = case cmd of
   Cmd.Go           -> go
   Cmd.Step         -> step
   Cmd.BreakAt x    -> breakAt x
+  Cmd.Paths        -> paths
   Cmd.Call a v g d -> call a v g d
-  Cmd.Inspect insp -> case insp of
-    Cmd.InspectStack   -> inspectStack
-    Cmd.InspectMemory  -> inspectMemory
-    Cmd.InspectStorage -> inspectStorage
-    Cmd.InspectCall    -> inspectCall
-    Cmd.InspectCode r  -> inspectCode r
+  Cmd.Abort        -> abort
+  Cmd.Inspect c    -> case c of
+    Cmd.InspectStack      -> inspectStack
+    Cmd.InspectMemory     -> inspectMemory
+    Cmd.InspectStorage    -> inspectStorage
+    Cmd.InspectCall       -> inspectCall
+    Cmd.InspectCode r     -> inspectCode r
+  Cmd.Interrupt c   -> case c of
+    Cmd.InterruptOn x     -> interruptOn x
+    Cmd.InterruptOff x    -> interruptOff x
+    Cmd.InterruptShow     -> interruptShow
+    Cmd.InterruptAction x -> interruptAction x
+    Cmd.InterruptPoint x  -> interruptPoint x
 
 
 go :: REPL ()
-go = yield Control.go
+go = yield $ Control.go
 
 step :: REPL ()
 step = yield Control.step
 
 breakAt :: Integer -> REPL ()
 breakAt = yield . Control.breakAt . fromInteger
+
+abort :: REPL ()
+abort = mutate Control.abort
 
 call :: Cmd.Address -> Value -> Value -> ByteField -> REPL ()
 call addr value gas calldata = do
@@ -93,23 +107,77 @@ inspectMemory = do
 
 inspectStorage :: REPL ()
 inspectStorage = do
-  vmState <- query Control.currentStackFrame
+  vmState <- query Control.peek
   let callee = msgCallee $ VM.stCall vmState
   storage <- queryBlockchain . Blockchain.storage $ toBytes callee
   putStrLn (show storage)
 
 inspectCall :: REPL ()
 inspectCall = do
-  vmState <- query Control.currentStackFrame
+  vmState <- query Control.peek
   let call = VM.stCall vmState
   printLn call
 
 inspectCode :: Maybe Cmd.CodeRef -> REPL ()
 inspectCode ref = do
-  vmState <- query Control.currentStackFrame
+  vmState <- query Control.peek
   let call = VM.stCall vmState
   putStrLn (show vmState)
 
+interruptOn :: [INT.IntType] -> REPL ()
+interruptOn = mapM_ (mutateSys . Sys.enableInterrupt)
+
+interruptOff :: [INT.IntType] -> REPL ()
+interruptOff = mapM_ (mutateSys . Sys.disableInterrupt)
+
+interruptAction :: Sys.InterruptAction -> REPL ()
+interruptAction = mutateSys . Sys.setInterruptAction
+
+interruptPoint :: Sys.InterruptPoint -> REPL ()
+interruptPoint = mutateSys . Sys.setInterruptPoint
+
+paths :: REPL ()
+paths = do
+  st <- querySys getState
+  putStrLn . Pathfinder.formatPath $ Pathfinder.tracePaths st
+
+interruptShow :: REPL ()
+interruptShow = 
+  let
+    showInterrupt t = case t of
+      INT.IAlert  -> "alert "
+      INT.ICall   -> "call  "
+      INT.ICycle  -> "cycle "
+      INT.IEmit   -> "emit  "
+      INT.IJump   -> "jump  "
+      INT.IJumpI  -> "jumpi "
+      INT.IReady  -> "ready "
+      INT.IReturn -> "return"
+      INT.ISLoad  -> "sload "
+      INT.ISStore -> "sstore"
+      INT.IStop   -> "stop  "
+
+    showIntPoint x = case x of
+      Sys.Finalize  -> "finalize"
+      Sys.Immediate -> "immediate"
+      Sys.Preempt   -> "preempt"
+
+    showIntAction x = case x of
+      Sys.Break  -> "break"
+      Sys.Echo   -> "echo"
+      Sys.Ignore -> "ignore"
+
+  in do
+    flags  <- querySys $ Sys.getInterrupts
+    action <- querySys $ Sys.getInterruptAction
+    ipoint <- querySys $ Sys.getInterruptPoint
+
+    putStrLn $ "Interrupt action:   " ++ showIntAction action
+    putStrLn $ "Interruption point: " ++ showIntPoint ipoint
+    putStrLn "Interrupt flags:"
+    mapM_ putStrLn
+      . map (\(k, v) -> "    " ++ showInterrupt k ++ "  " ++ show v)
+      $ map (\t -> (t, INT.isEnabled t flags)) INT.intTypes
 
 annotateByteField :: ByteField -> String
 annotateByteField =

@@ -12,17 +12,20 @@ import Fluidity.EVM.Types (Address)
 import Fluidity.EVM.Data.Transaction (MessageCall(..))
 import Fluidity.EVM.Data.Value (Value, uint)
 import Fluidity.EVM.Data.ByteField (ByteField)
-import Fluidity.EVM.Data.Bytecode (Op(Invalid))
+import Fluidity.EVM.Data.Bytecode (Op)
+import Fluidity.EVM.Core.System (Break)
+import Fluidity.EVM.Core.Interrupt (Interrupt)
 import qualified Fluidity.EVM.Core.VM as VM
+import qualified Fluidity.EVM.Data.Bytecode as BC
+import qualified Fluidity.EVM.Core.System as Sys
 import qualified Fluidity.EVM.Core.Interrupt as INT
-import qualified Fluidity.EVM.Core.Control as Control
 
 
 -- | Information collected during a message call
 data CallReport = CallReport
   { crMessageCall :: MessageCall
-  , crInterrupts  :: [INT.Interrupt]
-  , crResult      :: Result Control.Error ()
+  , crInterrupts  :: [Interrupt]
+  , crResult      :: Break ()
   }
 
 data CauseOfDeath
@@ -34,6 +37,7 @@ data CauseOfDeath
   | InvalidPC
   | InvalidOp
   | Other
+  | Invalid String
   deriving (Show, Generic, NFData)
 
 data PostMortem = PostMortem
@@ -97,6 +101,7 @@ explainCauseOfDeath cod = "Halted " ++ case cod of
   InvalidPC           -> "abnormally, due to end-of-code"
   InvalidOp           -> "by an invalid opcode"
   Other               -> "for an unclear reason"
+  Invalid e           -> "due to an internal error (" ++ show e ++ ")"
 
 isGraceful :: CauseOfDeath -> Bool
 isGraceful cod = case cod of
@@ -121,24 +126,23 @@ determineCauseOfDeath report =
     interrupts = crInterrupts report
   in
     case crResult report of
-      Ok _ ->
-        case find INT.isReturn interrupts of
-          Just (INT.Return x) -> Return x
-          Nothing             -> Stop
+      Sys.Done  _ -> case find INT.isReturn interrupts of
+        Just (INT.Return x) -> Return x -- todo: has to be the last one
+        Nothing             -> Stop
 
-      Err (Control.VMError e) ->
-        case e of
-          VM.InvalidJump _              -> InvalidJump
-          VM.InvalidPC _                -> InvalidPC
-          VM.OutOfGas                   -> OutOfGas
-          VM.NotImplemented (Invalid _) -> InvalidOp
-          VM.NotImplemented op          -> NotImplemented op
-          _                             -> Other
+      Sys.Fail e -> case e of
+        Sys.VMError ve -> case ve of
+          VM.InvalidJump _                 -> InvalidJump
+          VM.InvalidPC _                   -> InvalidPC
+          VM.OutOfGas                      -> OutOfGas
+          VM.NotImplemented (BC.Invalid _) -> InvalidOp
+          VM.NotImplemented op             -> NotImplemented op
+          _                                -> Other
+        _ -> Other
 
-      Err _ -> Other
+      Sys.Susp _ -> Invalid "suspended"
 
-
-isSendFunds :: INT.Interrupt -> Bool
+isSendFunds :: Interrupt -> Bool
 isSendFunds int = case int of
   INT.Call _ _ x _ _ _ -> if uint x > 0 then True else False
   _                    -> False

@@ -12,6 +12,7 @@
 -}
 
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE LambdaCase #-}
 
 module Control.Monad.Execution where
 
@@ -42,29 +43,38 @@ type Execution m i s e = ResultantT (InterruptibleT m (i, s)) s e
 -- process off.
 --
 -- The result is the final state and (if execution completed) the return value.
-execute :: (Monad m, Rise r ri rs re) => Execution m i s e a -> (e -> re) -> (forall b. m (Interruption m (i, s) (s, b)) -> (r ri rs re) (Interruption m (i, s) (s, b))) -> (i -> s -> (r ri rs re) Bool) -> s -> (r ri rs re) (s, Maybe a)
-execute task adaptError run handler state = do
+execute :: (Monad m, Monad r) => Execution m i s e a -> (forall b. m (Interruption m (i, s) (s, b)) -> r (Interruption m (i, s) (s, b))) -> (i -> s -> r (Maybe i)) -> s -> r (s, Either (i, Execution m i s e a) (Result e a))
+execute task run handler state = do
+  (st, result) <- runReplaceable run handler $ runResultantT task state
+  case result of
+    Left (int, task') -> do
+      let t = setState st >> (ResultantT $ \st -> task')
+      return (st, Left (int, t))
+    Right r -> do
+      return (st, Right $ join r)
+
+--executeR :: (Monad m, Monad r) => Execution m i s e a -> (forall b. m (Interruption m (i, s) (s, b)) -> r (Interruption m (i, s) (s, b))) -> (i -> s -> r Bool) -> s -> r (s, Either (Execution m i s e a) (Result e a))
+--executeR task run handler state = do
+--  (st, result) <- runResumable run handler $ runResultantT task state
+--  case result of
+--    Left (ev, task') -> do
+--      let t = setState st >> (ResultantT $ \st -> task')
+--      return (st, Left t)
+--    Right r -> do
+--      return (st, Right $ join r)
+
+executeOld :: (Monad m, Rise r ri rs re) => Execution m i s e a -> (e -> re) -> (forall b. m (Interruption m (i, s) (s, b)) -> (r ri rs re) (Interruption m (i, s) (s, b))) -> (i -> s -> (r ri rs re) Bool) -> s -> (r ri rs re) (s, Maybe a)
+executeOld task adaptError run handler state = do
   (st, result) <- runHandlerR run handler $ runResultantT task state
   case result of
     Nothing -> return (st, Nothing)
     Just r  -> do x <- point $ join (mapError adaptError <$> r)
                   return (st, Just x)
 
--- | Cancel-resumable version of `execute`, does not raise errors into caller
-executeR :: (Monad m, Monad r) => Execution m i s e a -> (forall b. m (Interruption m (i, s) (s, b)) -> r (Interruption m (i, s) (s, b))) -> (i -> s -> r Bool) -> s -> r (s, Either (Execution m i s e a) (Result e a))
-executeR task run handler state = do
-  (st, result) <- runResumable run handler $ runResultantT task state
-  case result of
-    Left task' -> do
-      let t = setState st >> (ResultantT $ \st -> task')
-      return (st, Left t)
-    Right r -> do
-      return (st, Right $ join r)
-
 -- | Run an Execution and fail if it is interrupted.
 uninterruptible :: (Monad m, Rise r ri rs re) => Execution m i s e a -> (e -> re) -> (i -> re) -> (forall b. m (Interruption m (i, s) (s, b)) -> (r ri rs re) (Interruption m (i, s) (s, b))) -> s -> (r ri rs re) (s, a)
 uninterruptible task adaptError interruptError run state = do
-  (st, r) <- execute task adaptError run (alwaysFail interruptError) state
+  (st, r) <- executeOld task adaptError run (alwaysFail interruptError) state
   case r of Just x -> return (st, x) -- the result will never be Nothing because the interrupt handler always fails
 
 -- | Like `uninterruptible`, but discards the final state
@@ -86,16 +96,37 @@ env :: Monad m => m a -> Execution m i s e a
 env = lift . lifti
 
 
--- Helper functions
+-- Special environments and handlers
 -- ---------------------------------------------------------------------
+
+-- | Run an execution to completion while accumulating interrupts in a list
+executeLog :: (Monad m, Monad r) => Execution m i s e a -> (forall b. m (Interruption m (i, s) (s, b)) -> r (Interruption m (i, s) (s, b))) -> s -> r (s, [i], Result e a)
+executeLog task run state = 
+  let
+    execLog acc ma st = do
+      (st', result) <- execute ma run alwaysBreak st
+      case result of
+        Left (i, c) -> execLog (i:acc) c st'
+        Right x     -> return (st', acc, x)
+  in
+    execLog [] task state
 
 -- | An interrupt handler that ignores the interrupt and cancels the execution
 handleNothing :: Monad m => i -> s -> m Bool
 handleNothing _ _ = return False
 
+-- | An interrupt handler that ignores the interrupt and cancels the execution
+alwaysBreak :: Monad m => i -> s -> m (Maybe i)
+alwaysBreak i _ = return $ Just i
+
 -- | An interrupt handler that always fails, wrapping the interrupt in an error
 alwaysFail :: Rise r ri rs re => (i -> re) -> i -> s -> (r ri rs re) Bool
 alwaysFail f i _ = fail $ f i
+
+
+
+-- Helper functions
+-- ---------------------------------------------------------------------
 
 -- | Like Interruptible's runHandlerM, but with Result instead of Maybe and the interrupt handler receives state
 runHandlerR :: Monad r => (forall b. m (Interruption m (i, s) (s, b)) -> r (Interruption m (i, s) (s, b))) -> (i -> s -> r Bool) -> InterruptibleT m (i, s) (s, a) -> r (s, Maybe (Result e a))
@@ -109,8 +140,8 @@ runHandlerR run handler ma = do
       else return (st, Nothing)
     Done (st, x) -> return $ (st, Just $ return x)
 
--- | Like `runHandlerR`, but also returns the continuation if the execution is cancelled
-runResumable :: Monad r => (forall b. m (Interruption m (i, s) (s, b)) -> r (Interruption m (i, s) (s, b))) -> (i -> s -> r Bool) -> InterruptibleT m (i, s) (s, a) -> r (s, Either (InterruptibleT m (i, s) (s, a)) (Result e a))
+-- | Like `runHandlerR`, but also returns the interrupt and continuation if the execution is cancelled
+runResumable :: Monad r => (forall b. m (Interruption m (i, s) (s, b)) -> r (Interruption m (i, s) (s, b))) -> (i -> s -> r Bool) -> InterruptibleT m (i, s) (s, a) -> r (s, Either (i, InterruptibleT m (i, s) (s, a)) (Result e a))
 runResumable run handler ma = do 
   result <- run $ runInterruptibleT ma
   case result of
@@ -118,8 +149,20 @@ runResumable run handler ma = do
       shouldContinue <- handler ev st
       if shouldContinue
       then runResumable run handler mb
-      else return (st, Left mb)
+      else return (st, Left (ev, mb))
     Done (st, x) -> return $ (st, Right $ return x)
+
+-- | Like `runHandlerR`, but also returns the interrupt and continuation if the execution is cancelled
+runReplaceable :: Monad r => (forall b. m (Interruption m (i, s) (s, b)) -> r (Interruption m (i, s) (s, b))) -> (i -> s -> r (Maybe i)) -> InterruptibleT m (i, s) (s, a) -> r (s, Either (i, InterruptibleT m (i, s) (s, a)) (Result e a))
+runReplaceable run handler ma = do 
+  result <- run $ runInterruptibleT ma
+  case result of
+    Done (st, x)      -> return (st, Right $ return x)
+    Cont (int, st) mb -> do
+      ret <- handler int st
+      case ret of
+        Just i  -> return (st, Left (i, mb))
+        Nothing -> runReplaceable run handler mb
 
 
 -- ---------------------------------------------------------------------

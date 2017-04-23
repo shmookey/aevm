@@ -29,9 +29,23 @@ data Interrupt
   | SLoad  Value Value
   | SStore Value Value
   | Stop
-  deriving (Show, Generic, NFData)
+  deriving (Eq, Show, Generic, NFData)
 
-data IntConf = IntConf
+data IntType
+  = IAlert
+  | ICall
+  | ICycle
+  | IEmit
+  | IJump
+  | IJumpI
+  | IReady
+  | IReturn
+  | ISLoad
+  | ISStore
+  | IStop
+  deriving (Eq, Show, Generic, NFData)
+
+data IntFlags = IntFlags
   { intAlert  :: Bool
   , intCall   :: Bool
   , intCycle  :: Bool
@@ -43,72 +57,120 @@ data IntConf = IntConf
   , intSLoad  :: Bool
   , intSStore :: Bool
   , intStop   :: Bool
-  } deriving (Show, Generic, NFData)
+  } deriving (Eq, Show, Generic, NFData)
 
-defaults :: IntConf
-defaults = IntConf
-  { intAlert  = False 
-  , intCall   = False 
+defaults :: IntFlags
+defaults = IntFlags
+  { intAlert  = True 
+  , intCall   = True 
   , intCycle  = False 
-  , intEmit   = False 
-  , intJump   = False 
-  , intJumpI  = False 
+  , intEmit   = True 
+  , intJump   = True 
+  , intJumpI  = True 
   , intReady  = False 
-  , intReturn = False 
-  , intSLoad  = False 
-  , intSStore = False 
-  , intStop   = False 
+  , intReturn = True 
+  , intSLoad  = True 
+  , intSStore = True 
+  , intStop   = True 
   }
 
-interruptible :: Interrupt -> IntConf -> Bool
-interruptible int ic = flip ($) ic $ case int of
-  Alert  _            -> intAlert
-  Call   _ _ _ _ _ _  -> intCall
-  Cycle  _            -> intCycle
-  Emit   _ _          -> intEmit
-  Jump   _            -> intJump
-  JumpI  _ _          -> intJumpI
-  Ready               -> intReady
-  Return _            -> intReturn
-  SLoad  _ _          -> intSLoad
-  SStore _ _          -> intSStore
-  Stop                -> intStop
+intType :: Interrupt -> IntType
+intType x = case x of
+  Alert  _            -> IAlert
+  Call   _ _ _ _ _ _  -> ICall
+  Cycle  _            -> ICycle
+  Emit   _ _          -> IEmit
+  Jump   _            -> IJump
+  JumpI  _ _          -> IJumpI
+  Ready               -> IReady
+  Return _            -> IReturn
+  SLoad  _ _          -> ISLoad
+  SStore _ _          -> ISStore
+  Stop                -> IStop
   
-enableAlert   x = x { intAlert  = True }
-enableCall    x = x { intCall   = True }
-enableCycle   x = x { intCycle  = True }
-enableEmit    x = x { intEmit   = True }
-enableJump    x = x { intJump   = True }
-enableJumpI   x = x { intJumpI  = True }
-enableReady   x = x { intReady  = True }
-enableReturn  x = x { intReturn = True }
-enableSLoad   x = x { intSLoad  = True }
-enableSStore  x = x { intSStore = True }
-enableStop    x = x { intStop   = True }
+interruptible :: Interrupt -> IntFlags -> Bool
+interruptible int = isEnabled (intType int)
+  
+isEnabled :: IntType -> IntFlags -> Bool
+isEnabled it flags = flip ($) flags $ case it of
+  IAlert  -> intAlert
+  ICall   -> intCall
+  ICycle  -> intCycle
+  IEmit   -> intEmit
+  IJump   -> intJump
+  IJumpI  -> intJumpI
+  IReady  -> intReady
+  IReturn -> intReturn
+  ISLoad  -> intSLoad
+  ISStore -> intSStore
+  IStop   -> intStop
+  
+enable :: IntType -> IntFlags -> IntFlags
+enable i x = case i of
+  IAlert  -> x { intAlert  = True }
+  ICall   -> x { intCall   = True }
+  ICycle  -> x { intCycle  = True }
+  IEmit   -> x { intEmit   = True }
+  IJump   -> x { intJump   = True }
+  IJumpI  -> x { intJumpI  = True }
+  IReady  -> x { intReady  = True }
+  IReturn -> x { intReturn = True }
+  ISLoad  -> x { intSLoad  = True }
+  ISStore -> x { intSStore = True }
+  IStop   -> x { intStop   = True }
 
-disableAlert  x = x { intAlert  = False }
-disableCall   x = x { intCall   = False }
-disableCycle  x = x { intCycle  = False }
-disableEmit   x = x { intEmit   = False }
-disableJump   x = x { intJump   = False }
-disableJumpI  x = x { intJumpI  = False }
-disableReady  x = x { intReady  = False }
-disableReturn x = x { intReturn = False }
-disableSLoad  x = x { intSLoad  = False }
-disableSStore x = x { intSStore = False }
-disableStop   x = x { intStop   = False }
+disable :: IntType -> IntFlags -> IntFlags
+disable i x = case i of
+  IAlert  -> x { intAlert  = False }
+  ICall   -> x { intCall   = False }
+  ICycle  -> x { intCycle  = False }
+  IEmit   -> x { intEmit   = False }
+  IJump   -> x { intJump   = False }
+  IJumpI  -> x { intJumpI  = False }
+  IReady  -> x { intReady  = False }
+  IReturn -> x { intReturn = False }
+  ISLoad  -> x { intSLoad  = False }
+  ISStore -> x { intSStore = False }
+  IStop   -> x { intStop   = False }
 
-isAlert  = \case { Alert  _           -> True ; _ -> False }
-isCall   = \case { Call   _ _ _ _ _ _ -> True ; _ -> False }
-isCycle  = \case { Cycle  _           -> True ; _ -> False }
-isEmit   = \case { Emit   _ _         -> True ; _ -> False }
-isJump   = \case { Jump   _           -> True ; _ -> False }
-isJumpI  = \case { JumpI  _ _         -> True ; _ -> False }
-isReady  = \case { Ready              -> True ; _ -> False }
-isReturn = \case { Return _           -> True ; _ -> False }
-isSLoad  = \case { SLoad  _ _         -> True ; _ -> False }
-isSStore = \case { SStore _ _         -> True ; _ -> False }
-isStop   = \case { Stop               -> True ; _ -> False }
+intTypes :: [IntType]
+intTypes = [ IAlert, ICall,   ICycle, IEmit,   IJump, IJumpI
+           , IReady, IReturn, ISLoad, ISStore, IStop ]
+
+enableAlert   = enable  IAlert 
+enableCall    = enable  ICall  
+enableCycle   = enable  ICycle 
+enableEmit    = enable  IEmit  
+enableJump    = enable  IJump  
+enableJumpI   = enable  IJumpI 
+enableReady   = enable  IReady 
+enableReturn  = enable  IReturn
+enableSLoad   = enable  ISLoad 
+enableSStore  = enable  ISStore
+enableStop    = enable  IStop  
+disableAlert  = disable IAlert 
+disableCall   = disable ICall  
+disableCycle  = disable ICycle 
+disableEmit   = disable IEmit  
+disableJump   = disable IJump  
+disableJumpI  = disable IJumpI 
+disableReady  = disable IReady 
+disableReturn = disable IReturn
+disableSLoad  = disable ISLoad 
+disableSStore = disable ISStore
+disableStop   = disable IStop  
+
+isAlert  = (== IAlert ) . intType 
+isCall   = (== ICall  ) . intType 
+isCycle  = (== ICycle ) . intType 
+isEmit   = (== IEmit  ) . intType 
+isJump   = (== IJump  ) . intType 
+isJumpI  = (== IJumpI ) . intType 
+isReady  = (== IReady ) . intType 
+isReturn = (== IReturn) . intType 
+isSLoad  = (== ISLoad ) . intType 
+isSStore = (== ISStore) . intType 
+isStop   = (== IStop  ) . intType 
 
 
 

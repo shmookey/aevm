@@ -31,6 +31,7 @@ import qualified Fluidity.EVM.Analyse.Outcome as Outcome
 import qualified Fluidity.EVM.Core.Blockchain as Blockchain
 import qualified Fluidity.EVM.Parallel as Parallel
 import qualified Fluidity.EVM.Core.Control as Control
+import qualified Fluidity.EVM.Core.System as Sys
 import qualified Fluidity.EVM.REPL.Command as Cmd
 import qualified Fluidity.EVM.Data.Format as Format
 
@@ -49,8 +50,8 @@ runCommand cmd = case cmd of
 call :: Cmd.SetRef -> Value -> Value -> ByteField -> Maybe Cmd.PostProcess -> REPL ()
 call ref value gas calldata post =
   let
-    msgcall :: Address -> ByteString -> MessageCall
-    msgcall from to = MessageCall
+    mkCall :: Address -> ByteString -> MessageCall
+    mkCall from to = MessageCall
       { msgCaller = from
       , msgCallee = mkAddress to
       , msgValue  = value
@@ -58,12 +59,12 @@ call ref value gas calldata post =
       , msgData   = calldata
       }
 
-    showResult :: (ByteString, PostMortem, Control.State) -> String
-    showResult (addr, pm, _) =
+    printResult :: ByteString -> PostMortem -> REPL ()
+    printResult addr pm = putStrLn $ 
       stubAddress addr ++ " " ++ Outcome.explainPostMortem pm
 
-    combinedFilter :: PostMortem -> Bool     
-    combinedFilter = case post of 
+    filtered :: PostMortem -> Bool     
+    filtered = case post of 
       Just ([],_) -> const True
       Just (fs,_) -> foldl (\acc f -> \pm -> acc pm && (singleFilter f) pm) (const True) fs
       Nothing     -> const True
@@ -79,39 +80,35 @@ call ref value gas calldata post =
       Cmd.FilterSend    -> Outcome.pmSentFunds
       Cmd.FilterNotImpl -> Outcome.pmNeedsImpl
 
-    outputSaver :: [(ByteString, PostMortem, Control.State)] -> REPL ()
-    outputSaver kvs = case post of
-      Just (_, Just x) -> do 
-        saveSet x . ParSet $ map (\(addr, _, st) -> (addr, st)) kvs
-        putStrLn $ "Matching addresses saved as: " ++ x
-      _ -> return ()
+--    outputSaver :: [(ByteString, PostMortem, Control.State)] -> REPL ()
+--    outputSaver kvs = case post of
+--      Just (_, Just x) -> do 
+--        saveSet x . ParSet $ map (\(addr, _, st) -> (addr, st)) kvs
+--        putStrLn $ "Matching addresses saved as: " ++ x
+--      _ -> return ()
 
   in do
     putStrLn $ toHex calldata
-    caller     <- getAddress
-    callees    <- resolveRef ref
-    msgs       <- 
-      case callees of
-        Left addrs -> do
-          state  <- getControlState
-          return $ map (\x -> (msgcall caller x, state)) addrs
-        Right (ParSet entries) ->
-          return $ map (\(addr, state) -> (msgcall caller addr, state)) entries
 
-    (t, rs) <- timed . return $ Parallel.multicall msgs
-    let rs'     = filter (\(_,x,_) -> combinedFilter x) rs
-    mapM_ (printLn . showResult) rs'
-    putStrLn $ "Completed " ++ (show $ length callees) ++ " tasks in " ++ show t ++ " seconds"
-    outputSaver rs'
+    caller   <- getAddress
+    callees  <- resolveRef ref
+    chain    <- queryBlockchain getState
+    (t, pms) <- timed . return $ Parallel.postmortems callees (mkCall caller) chain
+
+    mapM_ (uncurry printResult) . filter (filtered . snd) $ zip callees pms
+
+    putStrLn $ "Ran " ++ (show $ length callees) ++ " contracts in " ++ show t ++ " seconds"
+--    outputSaver rs'
 
 
 -- Set functions
 -- ---------------------------------------------------------------------
 
-resolveRef :: Cmd.SetRef -> REPL (Either [ByteString] ParSet)
+resolveRef :: Cmd.SetRef -> REPL [ByteString]
 resolveRef sr = case sr of
-  Cmd.SetRange addr -> Left <$> matchingAddresses addr
-  Cmd.SetAlias x    -> Right <$> getSet x
+  Cmd.SetRange addr -> matchingAddresses addr
+  Cmd.SetAlias x    -> do ParSet entries <- getSet x
+                          return $ map fst entries
 
 listSets :: REPL ()
 listSets = do
@@ -143,8 +140,9 @@ showStorage x =
     show1 :: ByteString -> Control.State -> REPL ()
     show1 addr st = 
       let
-        bc      = Control.stBlockchain st
-        accts   = Blockchain.stAccountDB bc
+        sys     = Control.stSystemState st
+        chain   = Sys.stChain sys
+        accts   = Blockchain.stAccountDB chain
         storage = Acct.storage addr accts
      in do
        printLn $ Format.address addr ~~ ":"

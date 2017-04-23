@@ -14,6 +14,7 @@ import qualified Data.Map as Map
 import qualified Data.ByteString as B
 
 import Control.Monad.Combinator
+import Control.Monad.If (ifM)
 import Control.Monad.Result
 import Control.Monad.Resultant
 import Control.Monad.Execution hiding (interrupt)
@@ -28,7 +29,7 @@ import Fluidity.EVM.Data.Operations
 import Fluidity.EVM.Data.Prov (Prov(Sys, Nul), Sys(GasLeft))
 import Fluidity.EVM.Data.Transaction
 import Fluidity.EVM.Data.Value
-import Fluidity.EVM.Core.Interrupt (Interrupt, IntConf)
+import Fluidity.EVM.Core.Interrupt (Interrupt, IntFlags)
 import qualified Fluidity.EVM.Data.ByteField as BF
 import qualified Fluidity.EVM.Data.Bytecode as Bytecode
 import qualified Fluidity.EVM.Core.Blockchain as Chain
@@ -48,7 +49,7 @@ data State = State
   , stStack   :: Stack
   , stMemory  :: Memory
   , stGas     :: Integer
-  , stIntConf :: IntConf
+  , stIntFlags :: IntFlags
   } deriving (Show, Generic, NFData)
 
 data Error
@@ -63,7 +64,7 @@ data Error
   | BadStatus
   | OutOfGas
   | EmptyCode
-  deriving (Show, Generic, NFData)
+  deriving (Eq, Show, Generic, NFData)
 
 data Status
   = Idle
@@ -107,8 +108,9 @@ step = do
   (sz, op) <- nextOp
   chargeGas
   perform op
-  updatePC (+sz)
-  getPC  >>= interrupt . INT.Cycle
+  ifM isRunning $ do
+    updatePC (+sz)
+    getPC  >>= interrupt . INT.Cycle
 
 -- | Is the VM in a running state?
 isRunning :: VM Bool
@@ -135,7 +137,7 @@ chargeGas = do
 
 interrupt :: Interrupt -> VM ()
 interrupt x = do
-  ints <- getIntConf
+  ints <- getIntFlags
   when (INT.interruptible x ints) $ Exec.interrupt x
 
 
@@ -385,7 +387,7 @@ initState msg = State
   , stGas     = 0
   , stCall    = msg
   , stCode    = mempty
-  , stIntConf = INT.defaults
+  , stIntFlags = INT.defaults
   }
 
 getPC      = stPC      <$> getState
@@ -395,7 +397,7 @@ getStatus  = stStatus  <$> getState
 getGas     = stGas     <$> getState
 getCall    = stCall    <$> getState
 getCode    = stCode    <$> getState
-getIntConf = stIntConf <$> getState
+getIntFlags = stIntFlags <$> getState
 
 caller     = msgCaller <$> getCall
 callee     = msgCallee <$> getCall
@@ -409,12 +411,12 @@ setMemory  x = updateState (\st -> st { stMemory  = x }) :: VM ()
 setStatus  x = updateState (\st -> st { stStatus  = x }) :: VM ()
 setGas     x = updateState (\st -> st { stGas     = x }) :: VM ()
 setCode    x = updateState (\st -> st { stCode    = x }) :: VM ()
-setIntConf x = updateState (\st -> st { stIntConf = x }) :: VM ()
+setIntFlags x = updateState (\st -> st { stIntFlags = x }) :: VM ()
 
 updatePC      f = getPC      >>= setPC      . f
 updateStack   f = getStack   >>= setStack   . f
 updateMemory  f = getMemory  >>= setMemory  . f
 updateStatus  f = getStatus  >>= setStatus  . f
 updateGas     f = getGas     >>= setGas     . f
-updateIntConf f = getIntConf >>= setIntConf . f
+updateIntFlags f = getIntFlags >>= setIntFlags . f
 

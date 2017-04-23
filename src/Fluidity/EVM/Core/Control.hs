@@ -1,10 +1,12 @@
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE DeriveGeneric, DeriveAnyClass #-}
 module Fluidity.EVM.Core.Control where
 
 import Prelude hiding (fail)
-import Data.Functor.Identity (Identity)
+import Data.Functor.Identity (Identity, runIdentity)
 import Data.Map (Map)
-import Control.Monad (void)
+import Control.Monad (liftM, void)
 import GHC.Generics (Generic)
 import Control.DeepSeq
 import qualified Data.Map as Map
@@ -18,141 +20,55 @@ import qualified Control.Monad.Execution as Execution
 import Fluidity.EVM.Data.Transaction
 import Fluidity.EVM.Core.Blockchain (Blockchain)
 import Fluidity.EVM.Core.VM (VM)
+import Fluidity.EVM.Core.System (Sys)
 import Fluidity.EVM.Data.Format as Format
 import qualified Fluidity.EVM.Analyse.Watchdog as Watchdog
 import qualified Fluidity.EVM.Core.Blockchain as Blockchain
 import qualified Fluidity.EVM.Core.VM as VM
+import qualified Fluidity.EVM.Core.System as Sys
 import qualified Fluidity.EVM.Core.Interrupt as INT
 
 
 type Control = Execution Identity Interrupt State Error
 
 data State = State
-  { stBlockchain    :: Blockchain.State
-  , stCallStack     :: [VM.State]
+  { stSystemState   :: Sys.State
   , stCheckpoints   :: CheckpointDB
-  , stRunMode       :: Mode
-  , stCallCont      :: Maybe (VM ())
-  , stInterruptible :: Bool
-  , stAnalyticMode  :: Bool
-  , stMonitoring    :: Bool
-  } deriving (Generic)
+  , stLast          :: Sys.State
+  } deriving (Show, Generic, NFData)
 
 data Interrupt
-  = VMInterrupt INT.Interrupt Int
+  = SysInterrupt INT.Interrupt
   | WatchdogEvent Watchdog.Event
   | CheckpointSaved Int String
   | CallSucceeded
   | GenericInterrupt String
   deriving (Show, Generic, NFData)
 
--- | Current running mode requested from the caller
-data Mode
-  = Run | Step | Until Int
-  deriving (Show)
-
 data Error
   = InternalError
-  | BlockchainError Blockchain.Error
-  | VMError VM.Error
-  | InvalidCheckpoint Int
-  | UnexpectedInterrupt INT.Interrupt
-  | NotExecutingCall
-  | CallInProgress
-  | NoCallInProgress
-  | InconsistentInternalState
+  | SysError Sys.Error
+  | CheckpointError String
+  | Interrupted INT.Interrupt
+  | Suspended INT.Interrupt
+  | Busy
   deriving (Show, Generic, NFData)
 
-instance NFData State where
-  rnf st = seq (rnf stBlockchain)
-         . seq (rnf stCallStack)
-         . seq (rnf stCheckpoints)
-         . seq (rnf stRunMode)
-         . seq (rnf stInterruptible)
-         $ seq (rnf stAnalyticMode) ()
-         
-
-
--- Execution control
--- ---------------------------------------------------------------------
-
--- | Resume the active task and run until it stops
-go :: Control ()
-go = setRunMode Run >> resume
-
--- | Resume the active task for one step
-step :: Control ()
-step = setRunMode Step >> resume
-
--- | Resume the active task until a given address is reached
-breakAt :: Int -> Control ()
-breakAt x = setRunMode (Until x) >> resume
+instance SubError Error Sys.Error where suberror = SysError         
 
 
 -- Runtime monitoring
 -- ---------------------------------------------------------------------
 
--- | Respond to a VM interrupt, updating the call stack with the new VM state
-handleInterrupt :: INT.Interrupt -> VM.State -> Control Bool
-handleInterrupt ev st = do
-  updateVMState st
-  breaking   <- atBreakpoint ev
-  monitoring <- getMonitoring
-  pc         <- return $ VM.stPC st
-  if breaking            then return False
-  else if isCycle ev     then return True
-  else if not monitoring then return True
-  else do
-    mapM_ (interrupt . WatchdogEvent) $ (force $ Watchdog.analyse ev pc)
-    isUninterruptible <- not <$> getInterruptible
-    isAnalyticMode    <- getAnalyticMode
-    if isAnalyticMode
-    then interrupt $ VMInterrupt ev pc -- Echo interrupt to the controlling monad
-    else return ()
-
-    case ev of
-      INT.Ready -> do
-        i <- saveCheckpoint "Ready"
-        interrupt $ CheckpointSaved i "Ready"
-        return True
-
-      _ -> return True
-
-isCycle :: INT.Interrupt -> Bool
-isCycle ev = case ev of
-  INT.Cycle _  -> True
-  _            -> False
-
-atBreakpoint :: INT.Interrupt -> Control Bool
-atBreakpoint ev = do
-  mode <- getRunMode
-  return $ case (mode, ev) of
-    (Step,    INT.Cycle _) -> True
-    (Until a, INT.Cycle b) -> a == b
-    _                      -> False
-
-
--- Call stack
--- ---------------------------------------------------------------------
-
-popStackFrame :: Control VM.State
-popStackFrame = getCallStack >>= \(x:xs) -> setCallStack xs >> return x
-
-pushStackFrame :: VM.State -> Control ()
-pushStackFrame x = updateCallStack $ (:) x
-
-currentStackFrame :: Control VM.State
-currentStackFrame = getCallStack >>= \cs -> case cs of
-  []      -> fail NoCallInProgress
-  (x:xs)  -> return x
-
-updateVMState :: VM.State -> Control ()
-updateVMState x = popStackFrame >> pushStackFrame x
-
-isInCall :: Control Bool
-isInCall = getCallStack >>= \cs -> case cs of
-  []      -> return False
-  (x:xs)  -> return True
+-- | Respond to a system interrupt
+onInterrupt :: INT.Interrupt -> Sys.State -> Control (Maybe INT.Interrupt)
+onInterrupt int st = do
+  setSystemState st
+  case int of INT.Alert _ -> interrupt $ SysInterrupt int
+              _ -> return ()
+  pc <- queryVM VM.getPC
+  mapM_ (interrupt . WatchdogEvent) (Watchdog.analyse int pc)
+  return Nothing
 
 
 -- Checkpoints 
@@ -160,33 +76,23 @@ isInCall = getCallStack >>= \cs -> case cs of
 
 type CheckpointDB = (Int, Map Int Checkpoint)
 data Checkpoint = Checkpoint
-  { cpName       :: String
-  , cpBlockchain :: Blockchain.State
-  , cpCallStack  :: [VM.State]
-  , cpCallCont   :: Maybe (VM ())
-  }
+  { cpName  :: String
+  , cpState :: Sys.State
+  } deriving (Show, Generic, NFData)
 
 initCheckpoints :: CheckpointDB
 initCheckpoints = (0, mempty)
 
 -- | Loads the state at a given checkpoint, discarding the current state.
 loadCheckpoint :: Int -> Control ()
-loadCheckpoint i = getCheckpoints >>= \(_, cps) -> case Map.lookup i cps of
-  Just cp -> do
-    setBlockchain $ cpBlockchain cp
-    setCallStack  $ cpCallStack cp
-    setCallCont   $ cpCallCont cp
-
-  Nothing ->
-    fail $ InvalidCheckpoint i
+loadCheckpoint i = getCheckpoints >>= \(_, cs) -> case Map.lookup i cs of
+  Just c  -> setSystemState $ cpState c
+  Nothing -> fail . CheckpointError $ "no such checkpoint: " ++ show i
 
 -- | Save the current state as a checkpoint, returning the checkpoint ID
 saveCheckpoint :: String -> Control Int
 saveCheckpoint name = do
-  bc       <- getBlockchain
-  cs       <- getCallStack
-  at       <- getCallCont
-  let cp = Checkpoint name bc cs at
+  cp       <- liftM (Checkpoint name) getSystemState
   (n, cps) <- getCheckpoints
   setCheckpoints (n + 1, Map.insert n cp cps)
   return n
@@ -195,140 +101,57 @@ dropCheckpoint :: Int -> Control ()
 dropCheckpoint i = updateCheckpoints $ \(n,cps) -> (n, Map.delete i cps)
 
 
--- VM Interface
--- --------------------------------------------------------------------
-
--- | Message call into a VM 
-call :: MessageCall -> Control ()
-call msg = do
-
-  -- Pre-flight checks: not already in a message call
-  inCall <- isInCall
-  if inCall 
-  then fail CallInProgress
-  else return ()
-
-  callCont <- getCallCont
-  case callCont of 
-    Just _  -> fail InconsistentInternalState -- this should never happen
-    Nothing -> return ()
-
-
-  -- Create a fresh context and run the VM
-  let initialState = VM.initState msg
-  pushStackFrame initialState
-  (newState, result) <- Execution.executeR
-    VM.call
-    mutateBlockchain
-    handleInterrupt
-    initialState
-
-  -- Update the local context
-  updateVMState newState
-  case result of
-    Left cont -> do             -- Got continuation, store it, leave VM on the call stack
-      setCallCont $ Just cont
-
-    Right (Err e) -> do         -- Task failed, so remove the VM state from the call stack
-      popStackFrame
-      setCallCont Nothing
-      fail $ VMError e
-
-    Right (Ok _) -> do
-      interrupt CallSucceeded
-      popStackFrame             -- Task completed, so remove the VM state from the call stack
-      setCallCont Nothing
-
-
--- | Resume the active call
-resume :: Control ()
-resume = do
-
-  -- Pre-flight check 1: must be in a message call
-  inCall <- isInCall
-  if not inCall
-  then fail NoCallInProgress
-  else return ()
-
-  -- Use a continuation, if we have one, otherwise resume from the start of the cycle
-  maybeCallCont <- getCallCont
-  let callCont = case maybeCallCont of 
-                   Just x   -> x
-                   Nothing  -> VM.resume
-
-  -- Run the continuation with the VM state
-  lastState          <- currentStackFrame
-  (newState, result) <- Execution.executeR
-    callCont
-    mutateBlockchain
-    handleInterrupt
-    lastState
-
-  -- Update the local context
-  updateVMState newState
-  case result of
-    Left cont -> do             -- Got continuation, store it, leave VM on the call stack
-      setCallCont $ Just cont
-
-    Right (Err e) -> do         -- Task failed, so remove the VM state from the call stack
-      popStackFrame
-      setCallCont Nothing
-      fail $ VMError e
-
-    Right (Ok _) -> do
-      interrupt CallSucceeded
-      popStackFrame             -- Task completed, so remove the VM state from the call stack
-      setCallCont Nothing
-
-
--- | Run a VM computation without interrupts, discarding the final state
-query :: VM a -> Control a
-query task =
-  currentStackFrame >>= Execution.query
-    task
-    VMError
-    UnexpectedInterrupt
-    queryBlockchain
-
--- | Run a VM computation without interrupts, preserving the final state
-mutate :: VM a -> Control a
-mutate task = do
-  (st, x) <- currentStackFrame >>= Execution.uninterruptible
-    task
-    VMError
-    UnexpectedInterrupt
-    mutateBlockchain
-  updateVMState st
-  return x
-
-
--- Blockchain interface
+-- System interface
 -- ---------------------------------------------------------------------
 
--- | Like `Blockchain.commitBlock`, but fails if there is a message call in progress
-commitBlock :: Control ()
-commitBlock = do
-  stack <- getCallStack
-  if length stack > 0
-  then fail CallInProgress
-  else mutateBlockchain Blockchain.commitBlock
+-- Passthrough functions
+go               = yield Sys.go
+resume           = yield Sys.resume
+step             = yield Sys.step
+peek             = query Sys.peek
+running          = query Sys.running
+breakAt          = yield  . Sys.breakAt
+mutateBlockchain = mutate . Sys.mutateChain
+queryBlockchain  = query  . Sys.queryChain
+queryVM          = query  . Sys.query
+mutateVM         = mutate . Sys.mutate
+commitBlock      = mutate Sys.commitBlock
 
--- | Run an operation in the Blockchain monad with the current blockchain state, keeping changes
-mutateBlockchain :: Blockchain a -> Control a
-mutateBlockchain ma = do
-  blockchain <- getBlockchain
-  let (blockchain', result) = runResultant ma blockchain
-  setBlockchain blockchain'
-  x <- point $ mapError BlockchainError result
+call :: MessageCall -> Control ()
+call msg = do
+  query Sys.assertIdle 
+  st <- getSystemState 
+  setLast st
+  yield $ Sys.call msg
+
+abort :: Control ()
+abort = do
+  query Sys.assertActive
+  getLast >>= setSystemState
+
+yield :: Sys () -> Control ()
+yield ma = do
+  (sys, result) <- getSystemState >>= execute ma ident onInterrupt
+  setSystemState sys
+  case result of
+    Left (x, _)   -> fail $ Suspended x
+    Right (Ok _)  -> return ()
+    Right (Err e) -> do getLast >>= setSystemState
+                        fail $ SysError e
+
+-- | Run a VM computation without interrupts, discarding the final state
+query :: Sys a -> Control a
+query ma = getSystemState >>= Execution.query ma SysError Interrupted ident
+
+-- | Run a VM computation without interrupts, preserving the final state
+mutate :: Sys a -> Control a
+mutate ma = do
+  (sys, x) <- getSystemState >>= Execution.uninterruptible ma SysError Interrupted ident
+  setSystemState sys
   return x
 
--- | Run an operation in the Blockchain monad with the current blockchain state, discarding changes
-queryBlockchain :: Blockchain a -> Control a
-queryBlockchain ma = do
-  blockchain <- getBlockchain
-  let (blockchain', result) = runResultant ma blockchain
-  x <- point $ mapError BlockchainError result
-  return x
+ident :: Identity a -> Control a
+ident = return . runIdentity
 
 
 -- Monad state initialisation and access
@@ -336,45 +159,19 @@ queryBlockchain ma = do
 
 initState :: State
 initState = State
-  { stBlockchain    = Blockchain.initState
-  , stCallStack     = []
-  , stCheckpoints   = initCheckpoints
-  , stRunMode       = Run
-  , stCallCont      = Nothing
-  , stInterruptible = True
-  , stAnalyticMode  = True
-  , stMonitoring    = True
+  { stCheckpoints   = initCheckpoints
+  , stSystemState   = Sys.initState
+  , stLast          = Sys.initState
   }
 
-showState :: State -> String
-showState st = case stCallStack st of
-  []     -> "idle"
-  (vm:_) -> 
-    let
-      call   = VM.stCall vm
-      callee = Format.stub $ msgCallee call
-      caller = Format.stub $ msgCaller call
-      depth  = show $ length (stCallStack st)
-    in "running "
-    ++ "(" ++ depth ++ ") "
-    ++ caller ++ " => " ++ callee
-
-getBlockchain       = stBlockchain    <$> getState
-getCallStack        = stCallStack     <$> getState
 getCheckpoints      = stCheckpoints   <$> getState
-getRunMode          = stRunMode       <$> getState
-getCallCont         = stCallCont      <$> getState
-getInterruptible    = stInterruptible <$> getState
-getAnalyticMode     = stAnalyticMode  <$> getState
-getMonitoring       = stMonitoring    <$> getState
+getSystemState      = stSystemState   <$> getState
+getLast             = stLast          <$> getState
 
-setBlockchain    x  = updateState (\st -> st { stBlockchain    = x }) :: Control ()
-setCallStack     x  = updateState (\st -> st { stCallStack     = x }) :: Control ()
 setCheckpoints   x  = updateState (\st -> st { stCheckpoints   = x }) :: Control ()
-setRunMode       x  = updateState (\st -> st { stRunMode       = x }) :: Control ()
-setCallCont      x  = updateState (\st -> st { stCallCont      = x }) :: Control ()
-setInterruptible x  = updateState (\st -> st { stInterruptible = x }) :: Control ()
+setSystemState   x  = updateState (\st -> st { stSystemState   = x }) :: Control ()
+setLast          x  = updateState (\st -> st { stLast          = x }) :: Control ()
 
-updateCallStack   f = getCallStack   >>= setCallStack   . f
 updateCheckpoints f = getCheckpoints >>= setCheckpoints . f
+updateSystemState f = getSystemState >>= setSystemState . f
 

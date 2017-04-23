@@ -26,17 +26,17 @@ type Blockchain = Resultant State Error
 
 data State = State
   { stBlocks        :: [Block]
-  , stAccountDB      :: AccountDB
+  , stAccountDB     :: AccountDB
   , stCurrentBlock  :: Block
   , stCodeDB        :: CodeDB
-  } deriving (Show)
+  } deriving (Show, Generic, NFData)
 
 data Error
   = InsufficientFunds
   | NotAContract ByteString
   | UnknownAccount ByteString
   | NoSuchBlock Int
-  deriving (Show, Generic, NFData)
+  deriving (Eq, Show, Generic, NFData)
 
 
 -- Blocks
@@ -50,7 +50,7 @@ data Block = Block
   , blkDifficulty   :: Value
   , blkCoinbase     :: Value
   , blkTransactions :: [Transaction]
-  } deriving (Show)
+  } deriving (Show, Generic, NFData)
 
 getBlock :: Int -> Blockchain Block
 getBlock n = getBlocks >>= \xs ->

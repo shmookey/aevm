@@ -67,7 +67,10 @@ stubRangeLen v =
      else take 4 x ++ "..(" ++ show n ++ ").." ++ drop (length x - 4) x
 
 codeptr :: Bytes a => a -> String
-codeptr x = "0x" ++ (drop 4 $ stubEnd x)
+codeptr x = "0x" ++ (codeptr' x)
+
+codeptr' :: Bytes a => a -> String
+codeptr' x = drop 4 $ stubEnd x
 
 -- | Like `address` but takes a ByteString and truncates to 20 bytes
 address :: Bytes a => a -> String
@@ -145,6 +148,9 @@ abbreviated n bs =
      if len > n
      then take n hs ++ "{+" ++ show (len-n) ++ "b}"
      else hs
+
+codePtr :: Bytes a => a -> String
+codePtr = toString . fmtCodePtr . fromBytes . toBytes
 
 fmtCodePtr :: Int -> Fragment
 fmtCodePtr x = highlight Magenta $ "0x" ~~ (toHexWord 2 x :: String)

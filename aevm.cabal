@@ -24,10 +24,12 @@ library
                      , Fluidity.EVM.Analyse.Dependency
                      , Fluidity.EVM.Analyse.Formula
                      , Fluidity.EVM.Analyse.Outcome
+                     , Fluidity.EVM.Analyse.Pathfinder
                      , Fluidity.EVM.Analyse.Watchdog
                      , Fluidity.EVM.Core.Blockchain
                      , Fluidity.EVM.Core.Control
                      , Fluidity.EVM.Core.Interrupt
+                     , Fluidity.EVM.Core.System
                      , Fluidity.EVM.Core.VM
                      , Fluidity.EVM.Data.Account
                      , Fluidity.EVM.Data.Bytecode
@@ -58,6 +60,7 @@ library
                      , Confound.Util
                      , Control.Monad.Combinator
                      , Control.Monad.Execution
+                     , Control.Monad.If
                      , Control.Monad.Interruptible
                      , Control.Monad.Result
                      , Control.Monad.Resultant
