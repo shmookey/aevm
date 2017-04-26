@@ -20,17 +20,19 @@ library
                      , Fluidity.Common.Binary
                      , Fluidity.Common.Crypto
                      , Fluidity.Common.RLP
-                     , Fluidity.EVM
+
                      , Fluidity.EVM.Analyse.Dependency
                      , Fluidity.EVM.Analyse.Formula
                      , Fluidity.EVM.Analyse.Outcome
                      , Fluidity.EVM.Analyse.Pathfinder
                      , Fluidity.EVM.Analyse.Watchdog
+
                      , Fluidity.EVM.Core.Blockchain
                      , Fluidity.EVM.Core.Control
                      , Fluidity.EVM.Core.Interrupt
                      , Fluidity.EVM.Core.System
                      , Fluidity.EVM.Core.VM
+
                      , Fluidity.EVM.Data.Account
                      , Fluidity.EVM.Data.Bytecode
                      , Fluidity.EVM.Data.ByteField
@@ -41,6 +43,7 @@ library
                      , Fluidity.EVM.Data.Snapshot
                      , Fluidity.EVM.Data.Transaction
                      , Fluidity.EVM.Data.Value
+
                      , Fluidity.EVM.REPL
                      , Fluidity.EVM.REPL.Chain
                      , Fluidity.EVM.REPL.Command
@@ -52,12 +55,19 @@ library
                      , Fluidity.EVM.REPL.Parallel
                      , Fluidity.EVM.REPL.Parser
                      , Fluidity.EVM.REPL.State
-                     , Fluidity.EVM.Parallel
+
                      , Fluidity.EVM.Text
+                     , Fluidity.EVM.Text.Disassembly
+                     , Fluidity.EVM.Text.Util
+
+                     , Fluidity.EVM
+                     , Fluidity.EVM.Parallel
                      , Fluidity.EVM.Types
+
                      , Confound.Methods
                      , Confound.Types
                      , Confound.Util
+
                      , Control.Monad.Combinator
                      , Control.Monad.Execution
                      , Control.Monad.If
@@ -65,7 +75,11 @@ library
                      , Control.Monad.Result
                      , Control.Monad.Resultant
                      , Control.Monad.Resultant.IO
+
+                     , Data.Space.StateTree
+
                      , Text.Structured
+
   build-depends:       base >= 4.7 && < 5
                      , aeson
                      , ansi-terminal
@@ -129,10 +143,17 @@ executable confound
 test-suite execution
   type:                exitcode-stdio-1.0
   hs-source-dirs:      test
-  main-is:             Spec.hs
+  main-is:             test.hs
   default-language:    Haskell2010
   build-depends:       base >= 4.7 && < 5
                      , aevm
-  other-modules:       Test.Control.Monad.ExecutionSpec
+                     , bytestring
+                     , tasty
+                     , tasty-hspec
+                     , QuickCheck
+                     , hspec
+  other-modules:       Test.Fluidity.EVM.Data.BytecodeSpec
+
+
 
 

@@ -3,13 +3,14 @@ module Fluidity.EVM.Analyse.Pathfinder where
 
 import Data.Maybe (catMaybes)
 import Data.Semigroup ((<>))
-import Data.List (intercalate)
+import Data.List (intercalate, uncons)
 
 import Control.Monad.Result
 import Control.Monad.Resultant
+--import Data.Space.StateTree
 
 import Fluidity.EVM.Text (formatIntType)
-import Fluidity.EVM.Data.Value (cloneWith, uninitialised)
+import Fluidity.EVM.Data.Value (Value, cloneWith, uninitialised)
 import Fluidity.EVM.Core.System (Sys)
 import Fluidity.EVM.Core.VM (VM)
 import Fluidity.EVM.Core.Interrupt (Interrupt, IntType)
@@ -183,7 +184,6 @@ deduplicate = snd . dedupe []
         Halt x       -> x `prune` (x:acc, Halt x)
         _            -> (acc, p)
 
-
 -- | Build a potentially infinite tree of pathways that execution can follow
 explore :: Sys.State -> Path
 explore st = 
@@ -219,5 +219,45 @@ explore st =
       INT.Return _  -> Halt pc
       INT.JumpI _ _ -> Branch pc left right
       _             -> Event pc (explore st') i
+
+--data Halt = InternalError | SystemError | Success
+--type ExecTree = STree Halt [Interrupt]
+--
+--generate :: Sys.State -> ExecTree
+--generate st =
+--  let
+--    mkLeft :: Sys.State -> Maybe (Int, ExecTree)
+--    mkLeft st = do
+--      ptr <- (+1) <$> getPC st
+--      st' <- setStack2 0 st
+--      return (ptr, generate st')
+--
+--    mkRight :: Sys.State -> Value -> Maybe (Int, ExecTree)
+--    mkRight st val = do
+--      let ptr = toInt val
+--      st' <- setStack2 0 st
+--      return (ptr, generate st')
+--      
+--  in case Sys.run Sys.resume st of
+--    (st', Sys.Done _) -> Halt InternalError
+--    (st', Sys.Fail _) -> Halt SystemError
+--    (st', Sys.Susp i) -> case i of
+--      INT.Stop      -> Halt Success
+--      INT.Return _  -> Halt Success
+--      INT.JumpI _ p -> 
+--
+--getPC :: Sys.State -> Maybe Int
+--getPC sys = do
+--  (vm, _) <- uncons $ Sys.stStack sys
+--  return $ VM.stPC vm
+--
+--setStack2 :: Int -> Sys.State -> Maybe Sys.State
+--setStack2 x sys = do 
+--  (vm, vms) <- uncons $ Sys.stStack sys
+--  vmStack   <- case VM.stStack vm of
+--    a:b:xs -> Just $ a:(cloneWith (const x) uninitialized):xs
+--    _      -> Nothing
+--  let vms' = (vm { VM.stStack = vmStack }) : vms
+--  return $ sys { Sys.stStack = vms' }
 
 

@@ -20,6 +20,7 @@ import qualified Fluidity.EVM.Data.Account as Acct
 import qualified Fluidity.EVM.Data.Format as Format
 import qualified Fluidity.EVM.Core.Blockchain as Blockchain
 import qualified Fluidity.EVM.REPL.Command as Cmd
+import qualified Fluidity.EVM.Text.Disassembly as Disasm
 
 
 runCommand :: Cmd.Chain -> REPL ()
@@ -32,6 +33,8 @@ runCommand cmd = case cmd of
     Cmd.AccountList prefix         -> listAccounts prefix
     Cmd.AccountBalanceGet a        -> getBalance a
     Cmd.AccountBalanceSet a x      -> setBalance a x
+    Cmd.AccountCodeDisassemble a   -> showCodeDisassembly a
+    Cmd.AccountCodeHexDump a       -> showCodeHexDump a
     Cmd.AccountShow a              -> showAccount a
     Cmd.AccountDrop a              -> dropAccount a
     Cmd.AccountStorageGet a        -> getStorage a
@@ -112,4 +115,16 @@ getStorageAt ref key = do
 
 setStorageAt :: Cmd.Address -> ByteString -> ByteString -> REPL ()
 setStorageAt = error ""
+
+showCodeDisassembly :: Cmd.Address -> REPL ()
+showCodeDisassembly ref = do
+  addr <- uniqueAddress ref
+  code <- queryBlockchain $ Blockchain.code addr
+  putStrLn . Disasm.disassembly $ toBytes code
+  
+showCodeHexDump :: Cmd.Address -> REPL ()
+showCodeHexDump ref = do
+  addr <- uniqueAddress ref
+  code <- queryBlockchain $ Blockchain.code addr
+  putStrLn $ toHex code
 

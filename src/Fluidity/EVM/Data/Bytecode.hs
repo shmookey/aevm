@@ -5,10 +5,12 @@ import Prelude hiding (LT, GT)
 import GHC.Generics (Generic)
 import Control.DeepSeq
 import Data.Word (Word8)
+import Data.ByteString (ByteString)
+import qualified Data.ByteString as B
 
 import Control.Monad.Result
 
-import Fluidity.Common.Binary (toBytes)
+import Fluidity.Common.Binary (toBytes, toWord, unroll)
 import Fluidity.EVM.Data.Value
 import Fluidity.EVM.Data.ByteField
 import qualified Fluidity.EVM.Data.Prov as Prov
@@ -30,7 +32,7 @@ getOp p bs =
 
 getData :: Int -> Int -> ByteField -> Result Error Value
 getData p n bs =
-  if p >= 0 && p + n < size bs
+  if p >= 0 && p + n <= size bs
   then 
     let v = toValue $ slice p n bs
     in Ok $
@@ -39,6 +41,24 @@ getData p n bs =
   else
     Err EndOfInput
 
+disassemble :: ByteField -> [Op]
+disassemble bf = readOps 0
+  where readOps i = 
+          if i >= size bf then [] 
+          else case getOp i bf of
+            Ok (n, x) -> x : readOps (n+i)
+            Err e     -> error $ "internal error in disasm: " ++ show e
+
+disassembleWithPtr :: ByteField -> [(Int, Op)]
+disassembleWithPtr bf = readOps 0
+  where readOps i = 
+          if i >= size bf then [] 
+          else case getOp i bf of
+            Ok (n, x) -> (i, x) : readOps (n+i)
+            Err e     -> error $ "internal error in disasm: " ++ show e
+
+assemble :: [Op] -> ByteField
+assemble ops = fromByteString Prov.Nul . B.concat $ map toSym ops
 
 data Op
   -- 00s: Stop and arithmetic operations
@@ -329,4 +349,138 @@ sym op = case op of
   0xf4 -> Right DelegateCall  
   0xf5 -> Right Suicide       
   _    -> Right (Invalid $ toInteger op)
+
+toSym :: Op -> ByteString
+toSym op = case op of
+   Stop         -> B.singleton 0x00 
+   Add          -> B.singleton 0x01 
+   Mul          -> B.singleton 0x02 
+   Sub          -> B.singleton 0x03 
+   Div          -> B.singleton 0x04 
+   SDiv         -> B.singleton 0x05 
+   Mod          -> B.singleton 0x06 
+   SMod         -> B.singleton 0x07 
+   AddMod       -> B.singleton 0x08 
+   MulMod       -> B.singleton 0x09 
+   Exp          -> B.singleton 0x0A 
+   SignExtend   -> B.singleton 0x0b 
+   LT           -> B.singleton 0x10 
+   GT           -> B.singleton 0x11 
+   SLT          -> B.singleton 0x12 
+   SGT          -> B.singleton 0x13 
+   Eq           -> B.singleton 0x14 
+   IsZero       -> B.singleton 0x15 
+   And          -> B.singleton 0x16 
+   Or           -> B.singleton 0x17 
+   Xor          -> B.singleton 0x18 
+   Not          -> B.singleton 0x19 
+   Byte         -> B.singleton 0x1a 
+   SHA3         -> B.singleton 0x20 
+   Address      -> B.singleton 0x30 
+   Balance      -> B.singleton 0x31 
+   Origin       -> B.singleton 0x32 
+   Caller       -> B.singleton 0x33 
+   CallValue    -> B.singleton 0x34 
+   CallDataLoad -> B.singleton 0x35 
+   CallDataSize -> B.singleton 0x36 
+   CallDataCopy -> B.singleton 0x37 
+   CodeSize     -> B.singleton 0x38 
+   CodeCopy     -> B.singleton 0x39 
+   GasPrice     -> B.singleton 0x3a 
+   ExtCodeSize  -> B.singleton 0x3b 
+   ExtCodeCopy  -> B.singleton 0x3c 
+   BlockHash    -> B.singleton 0x40 
+   Coinbase     -> B.singleton 0x41 
+   Timestamp    -> B.singleton 0x42 
+   Number       -> B.singleton 0x43 
+   Difficulty   -> B.singleton 0x44 
+   GasLimit     -> B.singleton 0x45 
+   Pop          -> B.singleton 0x50 
+   MLoad        -> B.singleton 0x51 
+   MStore       -> B.singleton 0x52 
+   MStore8      -> B.singleton 0x53 
+   SLoad        -> B.singleton 0x54 
+   SStore       -> B.singleton 0x55 
+   Jump         -> B.singleton 0x56 
+   JumpI        -> B.singleton 0x57 
+   PC           -> B.singleton 0x58 
+   MSize        -> B.singleton 0x59 
+   Gas          -> B.singleton 0x5a 
+   JumpDest     -> B.singleton 0x5b 
+   Push1  x     -> B.cons 0x60 $ toWord 1  x 
+   Push2  x     -> B.cons 0x61 $ toWord 2  x 
+   Push3  x     -> B.cons 0x62 $ toWord 3  x 
+   Push4  x     -> B.cons 0x63 $ toWord 4  x 
+   Push5  x     -> B.cons 0x64 $ toWord 5  x 
+   Push6  x     -> B.cons 0x65 $ toWord 6  x 
+   Push7  x     -> B.cons 0x66 $ toWord 7  x 
+   Push8  x     -> B.cons 0x67 $ toWord 8  x 
+   Push9  x     -> B.cons 0x68 $ toWord 9  x 
+   Push10 x     -> B.cons 0x69 $ toWord 10 x 
+   Push11 x     -> B.cons 0x6a $ toWord 11 x 
+   Push12 x     -> B.cons 0x6b $ toWord 12 x 
+   Push13 x     -> B.cons 0x6c $ toWord 13 x 
+   Push14 x     -> B.cons 0x6d $ toWord 14 x 
+   Push15 x     -> B.cons 0x6e $ toWord 15 x 
+   Push16 x     -> B.cons 0x6f $ toWord 16 x 
+   Push17 x     -> B.cons 0x70 $ toWord 17 x 
+   Push18 x     -> B.cons 0x71 $ toWord 18 x 
+   Push19 x     -> B.cons 0x72 $ toWord 19 x 
+   Push20 x     -> B.cons 0x73 $ toWord 20 x 
+   Push21 x     -> B.cons 0x74 $ toWord 21 x 
+   Push22 x     -> B.cons 0x75 $ toWord 22 x 
+   Push23 x     -> B.cons 0x76 $ toWord 23 x 
+   Push24 x     -> B.cons 0x77 $ toWord 24 x 
+   Push25 x     -> B.cons 0x78 $ toWord 25 x 
+   Push26 x     -> B.cons 0x79 $ toWord 26 x 
+   Push27 x     -> B.cons 0x7a $ toWord 27 x 
+   Push28 x     -> B.cons 0x7b $ toWord 28 x 
+   Push29 x     -> B.cons 0x7c $ toWord 29 x 
+   Push30 x     -> B.cons 0x7d $ toWord 30 x 
+   Push31 x     -> B.cons 0x7e $ toWord 31 x 
+   Push32 x     -> B.cons 0x7f $ toWord 32 x 
+   Dup1         -> B.singleton 0x80 
+   Dup2         -> B.singleton 0x81 
+   Dup3         -> B.singleton 0x82 
+   Dup4         -> B.singleton 0x83 
+   Dup5         -> B.singleton 0x84 
+   Dup6         -> B.singleton 0x85 
+   Dup7         -> B.singleton 0x86 
+   Dup8         -> B.singleton 0x87 
+   Dup9         -> B.singleton 0x88 
+   Dup10        -> B.singleton 0x89 
+   Dup11        -> B.singleton 0x8a 
+   Dup12        -> B.singleton 0x8b 
+   Dup13        -> B.singleton 0x8c 
+   Dup14        -> B.singleton 0x8d 
+   Dup15        -> B.singleton 0x8e 
+   Dup16        -> B.singleton 0x8f 
+   Swap1        -> B.singleton 0x90 
+   Swap2        -> B.singleton 0x91 
+   Swap3        -> B.singleton 0x92 
+   Swap4        -> B.singleton 0x93 
+   Swap5        -> B.singleton 0x94 
+   Swap6        -> B.singleton 0x95 
+   Swap7        -> B.singleton 0x96 
+   Swap8        -> B.singleton 0x97 
+   Swap9        -> B.singleton 0x98 
+   Swap10       -> B.singleton 0x99 
+   Swap11       -> B.singleton 0x9a 
+   Swap12       -> B.singleton 0x9b 
+   Swap13       -> B.singleton 0x9c 
+   Swap14       -> B.singleton 0x9d 
+   Swap15       -> B.singleton 0x9e 
+   Swap16       -> B.singleton 0x9f 
+   Log0         -> B.singleton 0xa0 
+   Log1         -> B.singleton 0xa1 
+   Log2         -> B.singleton 0xa2 
+   Log3         -> B.singleton 0xa3 
+   Log4         -> B.singleton 0xa4 
+   Create       -> B.singleton 0xf0 
+   Call         -> B.singleton 0xf1 
+   CallCode     -> B.singleton 0xf2 
+   Return       -> B.singleton 0xf3 
+   DelegateCall -> B.singleton 0xf4 
+   Suicide      -> B.singleton 0xf5 
+   Invalid x    -> unroll x
 

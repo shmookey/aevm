@@ -267,6 +267,18 @@ cmdChain =
                   val <- litInt
                   return $ AccountBalanceSet addr val
             ]
+      , do keyword "code"
+           space
+           P.choice
+             [ do keyword "disassemble"
+                  space
+                  addr <- address
+                  return $ AccountCodeDisassemble addr
+             , do keyword "hexdump"
+                  space
+                  addr <- address
+                  return $ AccountCodeHexDump addr
+            ]
       , do keyword "storage"
            space
            P.choice

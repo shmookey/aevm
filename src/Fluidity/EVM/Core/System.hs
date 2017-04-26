@@ -130,12 +130,12 @@ onInterrupt int st = do
     Ignore -> maybeBreak int
     Echo -> case ipoint of
       Immediate -> echo int >> maybeBreak int
-      Preempt   -> preemptSafe $ rollback >> echo int >> maybeBreak int
+      Preempt   -> preemptSafe (rollback >> echo int >> maybeBreak int)
       Finalize  -> do if newCycle then echo int else defer int
                       maybeBreak int
     Break -> case ipoint of
       Immediate -> return $ Just int
-      Preempt   -> preemptSafe $ rollback >> return (Just int)
+      Preempt   -> preemptSafe (rollback >> return (Just int))
       Finalize  -> defer int >> return Nothing
   else maybeBreak int
 
@@ -157,7 +157,7 @@ preemptSafe :: Sys (Maybe Interrupt) -> Sys (Maybe Interrupt)
 preemptSafe ma = do
   mode <- getMode
   case mode of
-    Preempted mode' -> setMode mode' >> return Nothing
+    Preempted mode' -> setMode mode' >> ma -- return Nothing
     _               -> setMode (Preempted mode) >> ma
 
 maybeBreak :: Interrupt -> Sys (Maybe Interrupt)

@@ -74,6 +74,8 @@ data Account
   = AccountList (Maybe Address)
   | AccountShow Address
   | AccountDrop Address
+  | AccountCodeDisassemble Address
+  | AccountCodeHexDump Address
   | AccountBalanceGet Address
   | AccountBalanceSet Address Integer
   | AccountStorageGet Address
@@ -186,7 +188,8 @@ complete (revline, partial) =
     intPointMenu  = ("evm interrupt point",   ["finalize", "immediate", "preempt"])
     chainMenu     = ("chain",                 ["account", "block"])
     blockMenu     = ("chain block",           ["commit", "list", "show"])
-    accountMenu   = ("chain account",         ["balance", "drop", "list", "show", "storage"])
+    accountMenu   = ("chain account",         ["balance", "code", "drop", "list", "show", "storage"])
+    codeMenu      = ("chain account code",    ["disassemble", "hexdump"])
     balanceMenu   = ("chain account balance", ["get", "set"])
     storageMenu   = ("chain account storage", ["get", "getkey", "setkey"])
     parMenu       = ("par",                   ["call", "set"])
@@ -202,6 +205,7 @@ complete (revline, partial) =
     return . (,) partial $ case words line of
       "chain" :r -> case r of "block"     :r -> menu blockMenu
                               "account"   :r -> case r of "balance" :r -> menu balanceMenu
+                                                          "code"    :r -> menu codeMenu
                                                           "storage" :r -> menu storageMenu
                                                           _            -> menu accountMenu
                               _              -> menu chainMenu

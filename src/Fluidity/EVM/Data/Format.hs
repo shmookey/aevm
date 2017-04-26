@@ -87,6 +87,16 @@ currency v = toString . colour Green $
     else if length b > 6 then insertDecimal 6  6 b ++ " szabo"
     else                      b                    ++ " wei"
 
+-- | Format a a value as a currency amount
+currency' :: Integer -> String
+currency' x = toString . colour Green $
+  let
+    b = show x
+  in
+    if length b > 12     then insertDecimal 18 6 b ++ " ether"
+    else if length b > 6 then insertDecimal 6  6 b ++ " szabo"
+    else                      b                    ++ " wei"
+
 boolean :: Value -> String
 boolean v = if int v == 0 then "false" else "true"
 

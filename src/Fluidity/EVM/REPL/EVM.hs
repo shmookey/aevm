@@ -39,6 +39,7 @@ import qualified Fluidity.EVM.Core.VM as VM
 import qualified Fluidity.EVM.Core.System as Sys
 import qualified Fluidity.EVM.Core.Interrupt as INT
 import qualified Fluidity.EVM.Data.Format as Format
+import qualified Fluidity.EVM.Text.Disassembly as Disasm
 
 
 runCommand :: Cmd.EVM -> REPL ()
@@ -120,9 +121,9 @@ inspectCall = do
 
 inspectCode :: Maybe Cmd.CodeRef -> REPL ()
 inspectCode ref = do
-  vmState <- query Control.peek
-  let call = VM.stCall vmState
-  putStrLn (show vmState)
+  code <- toBytes <$> queryVM VM.getCode
+  pc   <- queryVM VM.getPC
+  putStrLn $ Disasm.surroundingCode 8 8 pc code
 
 interruptOn :: [INT.IntType] -> REPL ()
 interruptOn = mapM_ (mutateSys . Sys.enableInterrupt)
