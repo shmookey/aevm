@@ -18,10 +18,10 @@ import Fluidity.EVM.Data.ByteField (ByteField, fromByteString)
 import Fluidity.EVM.Data.Value
 import Fluidity.EVM.Data.Prov (Prov(Usr))
 import Fluidity.EVM.REPL.Command
-import Fluidity.EVM.Core.Interrupt (IntType)
-import Fluidity.EVM.Core.System (InterruptAction, InterruptPoint)
+import Fluidity.EVM.Core.Interrupt (Action, IntType)
+import Fluidity.EVM.Core.System (Strategy)
 import qualified Fluidity.EVM.Data.Prov as Prov
-import qualified Fluidity.EVM.Core.Interrupt as INT
+import qualified Fluidity.EVM.Core.Interrupt as I
 import qualified Fluidity.EVM.Core.System as Sys
 import qualified Fluidity.EVM.Data.ByteField as BF
 
@@ -97,33 +97,33 @@ cmdEVM =
              InterruptAction <$> interruptAction
         , do keyword "point"
              space
-             InterruptPoint <$> interruptPoint
+             InterruptStrategy <$> interruptPoint
         ]
 
     interruptType :: Parse [IntType]
-    interruptType = P.choice $ map (\(k,v) -> const v <$> keyword k) intTypes
-      where intTypes = [ ( "call"  , [INT.ICall]   )
-                       , ( "cycle" , [INT.ICycle]  )
-                       , ( "emit"  , [INT.IEmit]   )
-                       , ( "jump"  , [INT.IJump]   )
-                       , ( "jumpi" , [INT.IJumpI]  )
-                       , ( "ready" , [INT.IReady]  )
-                       , ( "return", [INT.IReturn] )
-                       , ( "sload" , [INT.ISLoad]  )
-                       , ( "sstore", [INT.ISStore] )
-                       , ( "stop"  , [INT.IStop]   )
-                       , ( "all"   , INT.intTypes  ) ]
+    interruptType = P.choice $ map (\(k,v) -> const v <$> keyword k) iTypes
+      where iTypes = [ ( "call"  , [I.ICall]   )
+                     , ( "cycle" , [I.ICycle]  )
+                     , ( "emit"  , [I.IEmit]   )
+                     , ( "jump"  , [I.IJump]   )
+                     , ( "jumpi" , [I.IJumpI]  )
+                     , ( "ready" , [I.IReady]  )
+                     , ( "return", [I.IReturn] )
+                     , ( "sload" , [I.ISLoad]  )
+                     , ( "sstore", [I.ISStore] )
+                     , ( "stop"  , [I.IStop]   )
+                     , ( "all"   , I.types     ) ]
 
-    interruptAction :: Parse InterruptAction
+    interruptAction :: Parse Action
     interruptAction = P.choice $ map (\(k,v) -> const v <$> keyword k) actTypes
-      where actTypes = [ ("break",  Sys.Break)
-                       , ("echo",   Sys.Echo)
-                       , ("ignore", Sys.Ignore) ]
+      where actTypes = [ ("break",  I.Break)
+                       , ("echo",   I.Echo)
+                       , ("ignore", I.Ignore) ]
 
-    interruptPoint :: Parse InterruptPoint
+    interruptPoint :: Parse Strategy
     interruptPoint = P.choice $ map (\(k,v) -> const v <$> keyword k) ptTypes
       where ptTypes = [ ("immediate", Sys.Immediate)
-                      , ("finalize",  Sys.Finalize)
+                      , ("wait",      Sys.Wait)
                       , ("preempt",   Sys.Preempt) ]
 
   in do

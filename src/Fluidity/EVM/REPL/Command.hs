@@ -7,8 +7,8 @@ import System.Console.Haskeline.Completion
 import Fluidity.EVM.Analyse.Pathfinder (PathPattern)
 import Fluidity.EVM.Data.Value (Value)
 import Fluidity.EVM.Data.ByteField (ByteField)
-import Fluidity.EVM.Core.Interrupt (IntType)
-import Fluidity.EVM.Core.System (InterruptAction, InterruptPoint)
+import Fluidity.EVM.Core.Interrupt (IntType, Action)
+import Fluidity.EVM.Core.System (Strategy)
 
 
 data Command
@@ -54,8 +54,8 @@ data Interrupt
   = InterruptOn [IntType]
   | InterruptOff [IntType]
   | InterruptShow
-  | InterruptAction InterruptAction
-  | InterruptPoint InterruptPoint
+  | InterruptAction Action
+  | InterruptStrategy Strategy
 
 
 -- Chain

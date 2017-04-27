@@ -18,7 +18,7 @@ import Fluidity.EVM.Core.Interrupt (Interrupt)
 import qualified Fluidity.EVM.Core.VM as VM
 import qualified Fluidity.EVM.Data.Bytecode as BC
 import qualified Fluidity.EVM.Core.System as Sys
-import qualified Fluidity.EVM.Core.Interrupt as INT
+import qualified Fluidity.EVM.Core.Interrupt as I
 
 
 -- | Information collected during a message call
@@ -61,6 +61,7 @@ postMortem :: CallReport -> PostMortem
 postMortem report =
   let
     causeOfDeath = determineCauseOfDeath report
+    inttypes     = map I.iType $ crInterrupts report
     interrupts   = crInterrupts report
     msgcall      = crMessageCall report
     callee       = msgCallee msgcall
@@ -69,10 +70,10 @@ postMortem report =
     , pmGracefulHalt      = isGraceful causeOfDeath
     , pmNeedsImpl         = isNotImplemented causeOfDeath
     , pmProbableThrow     = isProbableThrow causeOfDeath
-    , pmWroteStorage      = any INT.isSStore interrupts
-    , pmReadStorage       = any INT.isSLoad  interrupts
-    , pmMadeExtCall       = any INT.isCall   interrupts
-    , pmSentFunds         = any isSendFunds  interrupts
+    , pmWroteStorage      = elem I.ISStore inttypes
+    , pmReadStorage       = elem I.ISLoad  inttypes
+    , pmMadeExtCall       = elem I.ICall   inttypes
+    , pmSentFunds         = any isSendFunds interrupts
 --    , pmCheckedGas        = 
 --    , pmReadSourceAddress = 
 --    , pmReadOwnAddress    = 
@@ -126,9 +127,9 @@ determineCauseOfDeath report =
     interrupts = crInterrupts report
   in
     case crResult report of
-      Sys.Done  _ -> case find INT.isReturn interrupts of
-        Just (INT.Return x) -> Return x -- todo: has to be the last one
-        Nothing             -> Stop
+      Sys.Done  _ -> case find ((==) I.IReturn . I.iType) interrupts of
+        Just (I.Return x) -> Return x -- todo: has to be the last one
+        Nothing           -> Stop
 
       Sys.Fail e -> case e of
         Sys.VMError ve -> case ve of
@@ -144,8 +145,8 @@ determineCauseOfDeath report =
 
 isSendFunds :: Interrupt -> Bool
 isSendFunds int = case int of
-  INT.Call _ _ x _ _ _ -> if uint x > 0 then True else False
-  _                    -> False
+  I.Call _ _ x _ _ _ -> if uint x > 0 then True else False
+  _                  -> False
 
 
 

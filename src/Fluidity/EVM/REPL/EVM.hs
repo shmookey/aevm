@@ -37,7 +37,7 @@ import qualified Fluidity.EVM.Core.Control as Control
 import qualified Fluidity.EVM.REPL.Command as Cmd
 import qualified Fluidity.EVM.Core.VM as VM
 import qualified Fluidity.EVM.Core.System as Sys
-import qualified Fluidity.EVM.Core.Interrupt as INT
+import qualified Fluidity.EVM.Core.Interrupt as I
 import qualified Fluidity.EVM.Data.Format as Format
 import qualified Fluidity.EVM.Text.Disassembly as Disasm
 
@@ -61,7 +61,7 @@ runCommand cmd = case cmd of
     Cmd.InterruptOff x    -> interruptOff x
     Cmd.InterruptShow     -> interruptShow
     Cmd.InterruptAction x -> interruptAction x
-    Cmd.InterruptPoint x  -> interruptPoint x
+    Cmd.InterruptStrategy x  -> interruptPoint x
 
 
 go :: REPL ()
@@ -125,17 +125,17 @@ inspectCode ref = do
   pc   <- queryVM VM.getPC
   putStrLn $ Disasm.surroundingCode 8 8 pc code
 
-interruptOn :: [INT.IntType] -> REPL ()
+interruptOn :: [I.IntType] -> REPL ()
 interruptOn = mapM_ (mutateSys . Sys.enableInterrupt)
 
-interruptOff :: [INT.IntType] -> REPL ()
+interruptOff :: [I.IntType] -> REPL ()
 interruptOff = mapM_ (mutateSys . Sys.disableInterrupt)
 
-interruptAction :: Sys.InterruptAction -> REPL ()
+interruptAction :: I.Action -> REPL ()
 interruptAction = mutateSys . Sys.setInterruptAction
 
-interruptPoint :: Sys.InterruptPoint -> REPL ()
-interruptPoint = mutateSys . Sys.setInterruptPoint
+interruptPoint :: Sys.Strategy -> REPL ()
+interruptPoint = mutateSys . Sys.setStrategy
 
 paths :: REPL ()
 paths = do
@@ -146,39 +146,39 @@ interruptShow :: REPL ()
 interruptShow = 
   let
     showInterrupt t = case t of
-      INT.IAlert  -> "alert "
-      INT.ICall   -> "call  "
-      INT.ICycle  -> "cycle "
-      INT.IEmit   -> "emit  "
-      INT.IJump   -> "jump  "
-      INT.IJumpI  -> "jumpi "
-      INT.IReady  -> "ready "
-      INT.IReturn -> "return"
-      INT.ISLoad  -> "sload "
-      INT.ISStore -> "sstore"
-      INT.IStop   -> "stop  "
+      I.IAlert  -> "alert "
+      I.ICall   -> "call  "
+      I.ICycle  -> "cycle "
+      I.IEmit   -> "emit  "
+      I.IJump   -> "jump  "
+      I.IJumpI  -> "jumpi "
+      I.IReady  -> "ready "
+      I.IReturn -> "return"
+      I.ISLoad  -> "sload "
+      I.ISStore -> "sstore"
+      I.IStop   -> "stop  "
 
     showIntPoint x = case x of
-      Sys.Finalize  -> "finalize"
+      Sys.Wait  -> "finalize"
       Sys.Immediate -> "immediate"
       Sys.Preempt   -> "preempt"
 
     showIntAction x = case x of
-      Sys.Break  -> "break"
-      Sys.Echo   -> "echo"
-      Sys.Ignore -> "ignore"
+      I.Break  -> "break"
+      I.Echo   -> "echo"
+      I.Ignore -> "ignore"
 
   in do
     flags  <- querySys $ Sys.getInterrupts
     action <- querySys $ Sys.getInterruptAction
-    ipoint <- querySys $ Sys.getInterruptPoint
+    ipoint <- querySys $ Sys.getStrategy
 
     putStrLn $ "Interrupt action:   " ++ showIntAction action
     putStrLn $ "Interruption point: " ++ showIntPoint ipoint
     putStrLn "Interrupt flags:"
     mapM_ putStrLn
       . map (\(k, v) -> "    " ++ showInterrupt k ++ "  " ++ show v)
-      $ map (\t -> (t, INT.isEnabled t flags)) INT.intTypes
+      $ map (\t -> (t, I.isEnabled t flags)) I.types
 
 annotateByteField :: ByteField -> String
 annotateByteField =

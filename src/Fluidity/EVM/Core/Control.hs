@@ -26,7 +26,7 @@ import qualified Fluidity.EVM.Analyse.Watchdog as Watchdog
 import qualified Fluidity.EVM.Core.Blockchain as Blockchain
 import qualified Fluidity.EVM.Core.VM as VM
 import qualified Fluidity.EVM.Core.System as Sys
-import qualified Fluidity.EVM.Core.Interrupt as INT
+import qualified Fluidity.EVM.Core.Interrupt as I
 
 
 type Control = Execution Identity Interrupt State Error
@@ -38,7 +38,7 @@ data State = State
   } deriving (Show, Generic, NFData)
 
 data Interrupt
-  = SysInterrupt INT.Interrupt
+  = SysInterrupt I.Interrupt
   | WatchdogEvent Watchdog.Event
   | CheckpointSaved Int String
   | CallSucceeded
@@ -49,22 +49,61 @@ data Error
   = InternalError
   | SysError Sys.Error
   | CheckpointError String
-  | Interrupted INT.Interrupt
-  | Suspended INT.Interrupt
+  | Interrupted I.Interrupt
+  | Suspended I.Interrupt
   | Busy
   deriving (Show, Generic, NFData)
 
 instance SubError Error Sys.Error where suberror = SysError         
 
 
+-- Debugger controls
+-- ---------------------------------------------------------------------
+
+-- | Set breaking interrupts to echo, run until halt, reset interrupts
+go :: Control ()
+go = do
+  ints <- query Sys.getInterrupts
+  bracket 
+    (mutate . Sys.setInterrupts $ I.nobreak ints)
+    (mutate $ Sys.setInterrupts ints)
+    (yield Sys.resume)
+
+-- | Run for a single cycle
+step :: Control ()
+step = do
+  ints <- query Sys.getInterrupts
+  bracket
+    (mutate . Sys.setInterrupts $ I.setAction I.Break I.ICycle ints)
+    (mutate $ Sys.setInterrupts ints)
+    (yield Sys.resume)
+
+-- | Run until the PC is at the given position or otherwise interrupted
+breakAt :: Int -> Control ()
+breakAt x = do
+  bps <- query Sys.getBreakpoints
+  bracket
+    (mutate $ Sys.setBreakpoint x)
+    (mutate $ Sys.setBreakpoints bps)
+    (yield Sys.resume)
+
+-- | Resume execution until next breaking interrupt
+continue :: Control ()
+continue =
+  yield Sys.resume
+
+
+resume = yield Sys.resume
+
+
 -- Runtime monitoring
 -- ---------------------------------------------------------------------
 
 -- | Respond to a system interrupt
-onInterrupt :: INT.Interrupt -> Sys.State -> Control (Maybe INT.Interrupt)
+onInterrupt :: I.Interrupt -> Sys.State -> Control (Maybe I.Interrupt)
 onInterrupt int st = do
   setSystemState st
-  case int of INT.Alert _ -> interrupt $ SysInterrupt int
+  case int of I.Alert _ -> interrupt $ SysInterrupt int
               _ -> return ()
   pc <- queryVM VM.getPC
   mapM_ (interrupt . WatchdogEvent) (Watchdog.analyse int pc)
@@ -105,12 +144,8 @@ dropCheckpoint i = updateCheckpoints $ \(n,cps) -> (n, Map.delete i cps)
 -- ---------------------------------------------------------------------
 
 -- Passthrough functions
-go               = yield Sys.go
-resume           = yield Sys.resume
-step             = yield Sys.step
 peek             = query Sys.peek
-running          = query Sys.running
-breakAt          = yield  . Sys.breakAt
+isActive         = query Sys.isActive
 mutateBlockchain = mutate . Sys.mutateChain
 queryBlockchain  = query  . Sys.queryChain
 queryVM          = query  . Sys.query

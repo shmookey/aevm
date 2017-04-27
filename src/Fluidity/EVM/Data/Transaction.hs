@@ -16,7 +16,7 @@ data Transaction = Transaction
   , txData      :: ByteField
   , txGas       :: Value
   , txCalls     :: [MessageCall]
-  } deriving (Show, Generic, NFData)
+  } deriving (Eq, Show, Generic, NFData)
 
 data MessageCall = MessageCall
   { msgCaller :: Value
@@ -24,5 +24,5 @@ data MessageCall = MessageCall
   , msgValue  :: Value
   , msgGas    :: Value
   , msgData   :: ByteField
-  } deriving (Show, Generic, NFData)
+  } deriving (Eq, Show, Generic, NFData)
 

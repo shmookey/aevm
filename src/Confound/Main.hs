@@ -11,10 +11,10 @@ import Analyse
 
 types = 
      [ "bytes", "address", "string", "uint256", "int256" ]
---  ++ intTypes
+--  ++ iTypes
 --  ++ bytesTypes
 
-intTypes = do
+iTypes = do
   prefix <- ["u",""]
   suffix <- map show $ map (2^) [3, 4, 5, 6]
   return $ prefix ++ "int" ++ suffix

@@ -52,7 +52,7 @@ formatPath = finish . format ([], [])
         let lbl = "[" ++ Format.codePtr x ++ "]"
         in (lbl : cur, acc)
       Event x p' i  -> 
-        let name = formatIntType $ INT.intType i
+        let name = formatIntType $ INT.iType i
             lbl  = Format.codePtr x ++ ":" ++ name
         in format (lbl : cur, acc) p'
       Branch x a b -> 
@@ -93,11 +93,11 @@ formatPath = finish . format ([], [])
 tracePaths :: Sys.State -> Path
 tracePaths state =
   let
-    state' = state { Sys.stMode = Sys.Run , Sys.stConfig = config }
+    state' = state { Sys.stStatus = Sys.Running , Sys.stConfig = config }
     config = Sys.Config
-      { Sys.cInterrupts      = INT.defaults
-      , Sys.cInterruptAction = Sys.Echo
-      , Sys.cInterruptPoint  = Sys.Preempt
+      { Sys.cInterrupts  = INT.defaults
+      , Sys.cStrategy    = Sys.Preempt
+      , Sys.cBreakpoints = [] 
       }
   in
     pruneLoops . pruneLoops . pruneLoops . filterErrors . deduplicate $ explore state'

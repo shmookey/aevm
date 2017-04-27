@@ -29,7 +29,7 @@ data State = State
   , stAccountDB     :: AccountDB
   , stCurrentBlock  :: Block
   , stCodeDB        :: CodeDB
-  } deriving (Show, Generic, NFData)
+  } deriving (Eq, Show, Generic, NFData)
 
 data Error
   = InsufficientFunds
@@ -50,7 +50,7 @@ data Block = Block
   , blkDifficulty   :: Value
   , blkCoinbase     :: Value
   , blkTransactions :: [Transaction]
-  } deriving (Show, Generic, NFData)
+  } deriving (Eq, Show, Generic, NFData)
 
 getBlock :: Int -> Blockchain Block
 getBlock n = getBlocks >>= \xs ->

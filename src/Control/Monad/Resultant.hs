@@ -105,6 +105,13 @@ class (Monad (r i s e), Monad i) => Rise (r :: (* -> *) -> * -> * -> * -> *) i s
     _ <- ma
     untilError ma
 
+  bracket :: r i s e a -> r i s e b -> r i s e c -> r i s e c
+  bracket ma mb mc = do
+    ma
+    r <- revive mc
+    mb
+    point r
+
   -- Conversions
 
   fromMaybe :: e -> Maybe a -> r i s e a
@@ -135,5 +142,4 @@ runWith ma st =
 
 subpoint :: (Rise r i s e, SubError e e') => Result e' a -> r i s e a
 subpoint r = point $ mapError suberror r
-
 

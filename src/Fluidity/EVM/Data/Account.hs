@@ -24,10 +24,10 @@ data Account = Account
   { acctBalance  :: Value
   , acctCodeHash :: ByteString
   , acctStorage  :: StorageDB
-  } deriving (Show, Generic, NFData)
+  } deriving (Eq, Show, Generic, NFData)
 
 data AccountDB = AccountDB (Map ByteString Account)
-  deriving (Show, Generic, NFData)
+  deriving (Eq, Show, Generic, NFData)
 
 instance Semigroup AccountDB where
   (AccountDB a) <> (AccountDB b) = AccountDB (a <> b)
@@ -135,7 +135,7 @@ deleteStorageAt k i = flip updateStorage k $ deleteStorageAtDB i
 -- ---------------------------------------------------------------------
 
 data CodeDB = CodeDB (Map ByteString ByteField)
-  deriving (Show, Generic, NFData)
+  deriving (Eq, Show, Generic, NFData)
 
 instance Semigroup CodeDB where
   (CodeDB a) <> (CodeDB b) = CodeDB (a <> b)
@@ -177,7 +177,7 @@ codeSize k = BF.sizeValue . lookupCode k
 -- ---------------------------------------------------------------------
 
 data StorageDB = StorageDB (Map ByteString (Value, Value))
-  deriving (Show, Generic, NFData)
+  deriving (Eq, Show, Generic, NFData)
 
 instance Semigroup StorageDB where
   (StorageDB a) <> (StorageDB b) = StorageDB (a <> b)

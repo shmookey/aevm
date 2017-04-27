@@ -10,6 +10,9 @@ import Fluidity.EVM.Data.ByteField (ByteField)
 import qualified Fluidity.EVM.Data.ByteField as BF
 
 
+-- Interrupt types
+-- ---------------------------------------------------------------------
+
 data Interrupt 
   = Alert  String
   | Call
@@ -32,50 +35,20 @@ data Interrupt
   deriving (Eq, Show, Generic, NFData)
 
 data IntType
-  = IAlert
-  | ICall
-  | ICycle
-  | IEmit
-  | IJump
-  | IJumpI
-  | IReady
-  | IReturn
-  | ISLoad
-  | ISStore
-  | IStop
+  = IAlert  | ICall   | ICycle
+  | IEmit   | IJump   | IJumpI
+  | IReady  | IReturn | ISLoad
+  | ISStore | IStop
   deriving (Eq, Show, Generic, NFData)
 
-data IntFlags = IntFlags
-  { intAlert  :: Bool
-  , intCall   :: Bool
-  , intCycle  :: Bool
-  , intEmit   :: Bool
-  , intJump   :: Bool
-  , intJumpI  :: Bool
-  , intReady  :: Bool
-  , intReturn :: Bool
-  , intSLoad  :: Bool
-  , intSStore :: Bool
-  , intStop   :: Bool
-  } deriving (Eq, Show, Generic, NFData)
+types = 
+  [ IAlert  , ICall   , ICycle
+  , IEmit   , IJump   , IJumpI
+  , IReady  , IReturn , ISLoad
+  , ISStore , IStop   ]
 
-defaults :: IntFlags
-defaults = IntFlags
-  { intAlert  = True 
-  , intCall   = True 
-  , intCycle  = False 
-  , intEmit   = True 
-  , intJump   = True 
-  , intJumpI  = True 
-  , intReady  = False 
-  , intReturn = True 
-  , intSLoad  = True 
-  , intSStore = True 
-  , intStop   = True 
-  }
-
-intType :: Interrupt -> IntType
-intType x = case x of
+iType :: Interrupt -> IntType
+iType x = case x of
   Alert  _            -> IAlert
   Call   _ _ _ _ _ _  -> ICall
   Cycle  _            -> ICycle
@@ -87,90 +60,66 @@ intType x = case x of
   SLoad  _ _          -> ISLoad
   SStore _ _          -> ISStore
   Stop                -> IStop
+
   
-interruptible :: Interrupt -> IntFlags -> Bool
-interruptible int = isEnabled (intType int)
+-- Configuration
+-- ---------------------------------------------------------------------
+
+data IntConfig = IntConfig
+  { iAlert  :: Action , iCall   :: Action , iCycle  :: Action
+  , iEmit   :: Action , iJump   :: Action , iJumpI  :: Action
+  , iReady  :: Action , iReturn :: Action , iSLoad  :: Action
+  , iSStore :: Action , iStop   :: Action
+  } deriving (Eq, Show, Generic, NFData)
+
+data Action = Echo | Break | Ignore
+  deriving (Eq, Show, Generic, NFData)
+
+defaults :: IntConfig
+defaults = IntConfig
+  { iAlert  = Echo , iCall   = Echo , iCycle  = Ignore
+  , iEmit   = Echo , iJump   = Echo , iJumpI  = Echo
+  , iReady  = Echo , iReturn = Echo , iSLoad  = Echo 
+  , iSStore = Echo , iStop   = Echo }
+
+action :: Interrupt -> IntConfig -> Action
+action = getAction . iType
+
+getAction :: IntType -> IntConfig -> Action
+getAction it flags = flip ($) flags $ case it of
+  { IAlert  -> iAlert  ; ICall   -> iCall   ; ICycle  -> iCycle
+  ; IEmit   -> iEmit   ; IJump   -> iJump   ; IJumpI  -> iJumpI
+  ; IReady  -> iReady  ; IReturn -> iReturn ; ISLoad  -> iSLoad
+  ; ISStore -> iSStore ; IStop   -> iStop   }
   
-isEnabled :: IntType -> IntFlags -> Bool
-isEnabled it flags = flip ($) flags $ case it of
-  IAlert  -> intAlert
-  ICall   -> intCall
-  ICycle  -> intCycle
-  IEmit   -> intEmit
-  IJump   -> intJump
-  IJumpI  -> intJumpI
-  IReady  -> intReady
-  IReturn -> intReturn
-  ISLoad  -> intSLoad
-  ISStore -> intSStore
-  IStop   -> intStop
-  
-enable :: IntType -> IntFlags -> IntFlags
-enable i x = case i of
-  IAlert  -> x { intAlert  = True }
-  ICall   -> x { intCall   = True }
-  ICycle  -> x { intCycle  = True }
-  IEmit   -> x { intEmit   = True }
-  IJump   -> x { intJump   = True }
-  IJumpI  -> x { intJumpI  = True }
-  IReady  -> x { intReady  = True }
-  IReturn -> x { intReturn = True }
-  ISLoad  -> x { intSLoad  = True }
-  ISStore -> x { intSStore = True }
-  IStop   -> x { intStop   = True }
+setAction :: Action -> IntType -> IntConfig -> IntConfig
+setAction x i c = case i of
+  IAlert  -> c { iAlert  = x }
+  ICall   -> c { iCall   = x }
+  ICycle  -> c { iCycle  = x }
+  IEmit   -> c { iEmit   = x }
+  IJump   -> c { iJump   = x }
+  IJumpI  -> c { iJumpI  = x }
+  IReady  -> c { iReady  = x }
+  IReturn -> c { iReturn = x }
+  ISLoad  -> c { iSLoad  = x }
+  ISStore -> c { iSStore = x }
+  IStop   -> c { iStop   = x }
 
-disable :: IntType -> IntFlags -> IntFlags
-disable i x = case i of
-  IAlert  -> x { intAlert  = False }
-  ICall   -> x { intCall   = False }
-  ICycle  -> x { intCycle  = False }
-  IEmit   -> x { intEmit   = False }
-  IJump   -> x { intJump   = False }
-  IJumpI  -> x { intJumpI  = False }
-  IReady  -> x { intReady  = False }
-  IReturn -> x { intReturn = False }
-  ISLoad  -> x { intSLoad  = False }
-  ISStore -> x { intSStore = False }
-  IStop   -> x { intStop   = False }
+echo :: IntType -> IntConfig -> IntConfig
+echo   = setAction Echo
 
-intTypes :: [IntType]
-intTypes = [ IAlert, ICall,   ICycle, IEmit,   IJump, IJumpI
-           , IReady, IReturn, ISLoad, ISStore, IStop ]
+break :: IntType -> IntConfig -> IntConfig
+break  = setAction Break
 
-enableAlert   = enable  IAlert 
-enableCall    = enable  ICall  
-enableCycle   = enable  ICycle 
-enableEmit    = enable  IEmit  
-enableJump    = enable  IJump  
-enableJumpI   = enable  IJumpI 
-enableReady   = enable  IReady 
-enableReturn  = enable  IReturn
-enableSLoad   = enable  ISLoad 
-enableSStore  = enable  ISStore
-enableStop    = enable  IStop  
-disableAlert  = disable IAlert 
-disableCall   = disable ICall  
-disableCycle  = disable ICycle 
-disableEmit   = disable IEmit  
-disableJump   = disable IJump  
-disableJumpI  = disable IJumpI 
-disableReady  = disable IReady 
-disableReturn = disable IReturn
-disableSLoad  = disable ISLoad 
-disableSStore = disable ISStore
-disableStop   = disable IStop  
+ignore :: IntType -> IntConfig -> IntConfig
+ignore = setAction Ignore
 
-isAlert  = (== IAlert ) . intType 
-isCall   = (== ICall  ) . intType 
-isCycle  = (== ICycle ) . intType 
-isEmit   = (== IEmit  ) . intType 
-isJump   = (== IJump  ) . intType 
-isJumpI  = (== IJumpI ) . intType 
-isReady  = (== IReady ) . intType 
-isReturn = (== IReturn) . intType 
-isSLoad  = (== ISLoad ) . intType 
-isSStore = (== ISStore) . intType 
-isStop   = (== IStop  ) . intType 
-
+-- | Switch all instances of "Break" to "Echo"
+nobreak :: IntConfig -> IntConfig
+nobreak c = foldl f c types
+  where f c x = if getAction x c == Break 
+                then setAction Echo x c
+                else c
 
 

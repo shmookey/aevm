@@ -50,7 +50,7 @@ instance Structured Interrupt where
     _             -> fmt $ show int
 
 formatInterrupt :: Interrupt -> String
-formatInterrupt = formatIntType . INT.intType
+formatInterrupt = formatIntType . INT.iType
 
 formatIntType :: IntType -> String
 formatIntType = toString . highlight Red . tail . show

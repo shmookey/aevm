@@ -17,7 +17,7 @@ import Control.Monad.Combinator
 import Control.Monad.If (ifM)
 import Control.Monad.Result
 import Control.Monad.Resultant
-import Control.Monad.Execution hiding (interrupt)
+import Control.Monad.Execution
 import qualified Control.Monad.Execution as Exec
 
 import Fluidity.Common.Binary (roll, toBytes)
@@ -29,7 +29,7 @@ import Fluidity.EVM.Data.Operations
 import Fluidity.EVM.Data.Prov (Prov(Sys, Nul), Sys(GasLeft))
 import Fluidity.EVM.Data.Transaction
 import Fluidity.EVM.Data.Value
-import Fluidity.EVM.Core.Interrupt (Interrupt, IntFlags)
+import Fluidity.EVM.Core.Interrupt (Interrupt)
 import qualified Fluidity.EVM.Data.ByteField as BF
 import qualified Fluidity.EVM.Data.Bytecode as Bytecode
 import qualified Fluidity.EVM.Core.Blockchain as Chain
@@ -49,8 +49,7 @@ data State = State
   , stStack   :: Stack
   , stMemory  :: Memory
   , stGas     :: Integer
-  , stIntFlags :: IntFlags
-  } deriving (Show, Generic, NFData)
+  } deriving (Eq, Show, Generic, NFData)
 
 data Error
   = StackUnderflow
@@ -134,11 +133,6 @@ chargeGas = do
   if gas <= 0
   then fail OutOfGas
   else return ()
-
-interrupt :: Interrupt -> VM ()
-interrupt x = do
-  ints <- getIntFlags
-  when (INT.interruptible x ints) $ Exec.interrupt x
 
 
 -- Instruction actions
@@ -387,7 +381,6 @@ initState msg = State
   , stGas     = 0
   , stCall    = msg
   , stCode    = mempty
-  , stIntFlags = INT.defaults
   }
 
 getPC      = stPC      <$> getState
@@ -397,7 +390,6 @@ getStatus  = stStatus  <$> getState
 getGas     = stGas     <$> getState
 getCall    = stCall    <$> getState
 getCode    = stCode    <$> getState
-getIntFlags = stIntFlags <$> getState
 
 caller     = msgCaller <$> getCall
 callee     = msgCallee <$> getCall
@@ -411,12 +403,10 @@ setMemory  x = updateState (\st -> st { stMemory  = x }) :: VM ()
 setStatus  x = updateState (\st -> st { stStatus  = x }) :: VM ()
 setGas     x = updateState (\st -> st { stGas     = x }) :: VM ()
 setCode    x = updateState (\st -> st { stCode    = x }) :: VM ()
-setIntFlags x = updateState (\st -> st { stIntFlags = x }) :: VM ()
 
 updatePC      f = getPC      >>= setPC      . f
 updateStack   f = getStack   >>= setStack   . f
 updateMemory  f = getMemory  >>= setMemory  . f
 updateStatus  f = getStatus  >>= setStatus  . f
 updateGas     f = getGas     >>= setGas     . f
-updateIntFlags f = getIntFlags >>= setIntFlags . f
 

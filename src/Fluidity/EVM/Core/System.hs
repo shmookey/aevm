@@ -7,6 +7,7 @@ import Prelude hiding (fail)
 import Data.Functor.Identity (Identity, runIdentity)
 import GHC.Generics (Generic)
 import Control.DeepSeq
+import Data.List (delete, nub)
 import Control.Monad (when, unless, void)
 
 import Control.Monad.Result
@@ -14,13 +15,14 @@ import Control.Monad.If
 import Control.Monad.Resultant
 import Control.Monad.Execution (Execution, execute, executeLog, alwaysBreak)
 import Control.Monad.Interruptible ()
-import qualified Control.Monad.Execution as E
+import Control.Monad.Execution
+import qualified Control.Monad.Execution as Exec
 
 import Fluidity.EVM.Core.Blockchain (Blockchain)
 import Fluidity.EVM.Core.VM (VM)
-import Fluidity.EVM.Core.Interrupt (Interrupt, IntFlags)
+import Fluidity.EVM.Core.Interrupt (Interrupt, Action(..), IntConfig)
 import qualified Fluidity.EVM.Core.Blockchain as Blockchain
-import qualified Fluidity.EVM.Core.Interrupt as INT
+import qualified Fluidity.EVM.Core.Interrupt as I
 import qualified Fluidity.EVM.Core.VM as VM
 import qualified Fluidity.EVM.Data.Transaction as Tx
 
@@ -30,13 +32,16 @@ type Sys = Execution Identity Interrupt State Error
 data State = State
   { stChain  :: Blockchain.State
   , stStack  :: [VM.State]
-  , stMode   :: Mode
+  , stStatus :: Status
   , stConfig :: Config
-  , stLast   :: Maybe (Blockchain.State, [VM.State])
   } deriving (Show, Generic, NFData)
 
-data Mode = Run | Step | Until Int | Finalizing Interrupt Mode | Preempted Mode
-  deriving (Show, Generic, NFData)
+data Status 
+  = Running                                    -- Running normally
+  | Preempted                                  -- Rolled back to start of current cycle
+  | Waiting Action Interrupt                   -- Waiting for cycle to end to raise interrupt
+  | Preemptible Blockchain.State [VM.State]    -- Able to roll back to start of current cycle
+  deriving (Eq, Show, Generic, NFData)
 
 data Break a
   = Done a
@@ -52,6 +57,18 @@ data Error
   | InternalError   String
   | Idle
   | Busy
+  deriving (Eq, Show, Generic, NFData)
+
+data Config = Config
+  { cInterrupts  :: IntConfig
+  , cStrategy    :: Strategy
+  , cBreakpoints :: [Int]
+  } deriving (Show, Generic, NFData)
+
+data Strategy
+  = Immediate -- Act as soon as the interrupt is received
+  | Preempt   -- Roll back to start of current cycle, then act
+  | Wait  -- Wait until end of cycle before acting
   deriving (Eq, Show, Generic, NFData)
 
 instance SubError Error Blockchain.Error where
@@ -76,130 +93,60 @@ runLog ma st =
     Ok x  -> (ints, Done x)
 
 
--- Execution control
--- ---------------------------------------------------------------------
-
--- | Resume the active task and run until it stops
-go :: Sys ()
-go = do
-  mode <- getMode
-  case mode of
-    Preempted _ -> setMode $ Preempted Run
-    _           -> setMode Run
-  resume
-
--- | Resume the active task for one step
-step :: Sys ()
-step = do
-  mode <- getMode
-  case mode of
-    Preempted _ -> setMode $ Preempted Step
-    _           -> setMode Step
-  resume
-
--- | Resume the active task until a given address is reached
-breakAt :: Int -> Sys ()
-breakAt x = do
-  mode <- getMode
-  case mode of
-    Preempted _ -> setMode . Preempted $ Until x
-    _           -> setMode $ Until x
-  resume
-
-
 -- Interrupts
 -- ---------------------------------------------------------------------
 
 -- | Respond to a VM interrupt, updating the call stack with the new VM state
 onInterrupt :: Interrupt -> VM.State -> Sys (Maybe Interrupt)
-onInterrupt int st = do
-  action        <- getInterruptAction
-  ipoint        <- getInterruptPoint
-  awaiting      <- isAwaitingFinalization
-  interruptible <- isInterruptible int
-  newCycle      <- return $ isNewCycle int
+onInterrupt i st = beforeBreakpoints i $ do
+  flush st
+  pt   <- getStrategy
+  act  <- getInterruptAction i
+  stat <- getStatus
 
-  unless (ipoint == Preempt && interruptible) $ do
-    flush st
-    when newCycle setRollbackPoint
+  case pt of
+    Immediate -> case act of Echo   -> interrupt i >> return Nothing
+                             Break  -> return (Just i)
+                             Ignore -> return Nothing
 
-  if awaiting && newCycle
-  then finalize
-  else if interruptible
-  then case action of
-    Ignore -> maybeBreak int
-    Echo -> case ipoint of
-      Immediate -> echo int >> maybeBreak int
-      Preempt   -> preemptSafe (rollback >> echo int >> maybeBreak int)
-      Finalize  -> do if newCycle then echo int else defer int
-                      maybeBreak int
-    Break -> case ipoint of
-      Immediate -> return $ Just int
-      Preempt   -> preemptSafe (rollback >> return (Just int))
-      Finalize  -> defer int >> return Nothing
-  else maybeBreak int
+    Preempt -> do
+      case i of { I.Cycle _ -> makePreemptible ; _ -> return () }
+      case act of Echo   -> preempt >> interrupt i >> return Nothing
+                  Break  -> preempt >> return (Just i)
+                  Ignore -> return Nothing
 
-finalize :: Sys (Maybe Interrupt)
-finalize = do
-  mode   <- getMode
-  action <- getInterruptAction
-  case (action, mode) of
-    (Break, Finalizing x m) -> setMode m >> return (Just x)
-    (Echo,  Finalizing x m) -> setMode m >> echo x >> return Nothing
-    _ -> fail $ InternalError "nothing to finalize"
+    Wait -> case (stat, i) of
+      (Waiting act' i', I.Cycle _) -> do
+        setStatus Running
+        case act' of Echo   -> interrupt i' >> return Nothing
+                     Break  -> return (Just i')
+                     Ignore -> return Nothing
 
-isAwaitingFinalization :: Sys Bool
-isAwaitingFinalization = flip fmap getMode $ \case
-  Finalizing _ _ -> True
-  _              -> False
+      _ -> do
+        when (act /= Ignore) $ setStatus (Waiting act i)
+        return Nothing
 
-preemptSafe :: Sys (Maybe Interrupt) -> Sys (Maybe Interrupt)
-preemptSafe ma = do
-  mode <- getMode
-  case mode of
-    Preempted mode' -> setMode mode' >> ma -- return Nothing
-    _               -> setMode (Preempted mode) >> ma
+beforeBreakpoints :: Interrupt -> Sys (Maybe Interrupt) -> Sys (Maybe Interrupt)
+beforeBreakpoints i ma = case i of { I.Cycle n -> f n ; _ -> ma }
+  where f x = do bs <- getBreakpoints
+                 flip fmap ma $ \case Just r              -> Just r
+                                      Nothing | elem x bs -> Just i
+                                      _                   -> Nothing
 
-maybeBreak :: Interrupt -> Sys (Maybe Interrupt)
-maybeBreak x = flip fmap getMode $ \m -> case (m, x) of
-  (Step   , _          )          -> Just x
-  (Until a, INT.Cycle b) | a == b -> Just x
-  _                               -> Nothing
-
-isNewCycle :: Interrupt -> Bool
-isNewCycle x = case x of
-  INT.Cycle _ -> True
-  INT.Ready   -> True
-  _           -> False
-
-defer :: Interrupt -> Sys ()
-defer x = do
-  mode  <- getMode
-  ifM (isInterruptible x) $ setMode (Finalizing x mode)
-
-echo :: Interrupt -> Sys ()
-echo x = ifM (isInterruptible x) $ E.interrupt x
-
-isInterruptible :: Interrupt -> Sys Bool
-isInterruptible x = do
-  byInterrupts <- INT.interruptible x <$> getInterrupts
-  byAction     <- (/= Ignore) <$> getInterruptAction
-  return $ byInterrupts && byAction
-
-setRollbackPoint :: Sys ()
-setRollbackPoint = do
+makePreemptible :: Sys ()
+makePreemptible = do
   chain <- getChain
   stack <- getStack
-  setLast $ Just (chain, stack)
+  setStatus $ Preemptible chain stack
 
-rollback :: Sys ()
-rollback = do
-  (chain, stack) <- getLast >>= fromMaybe (InternalError "rollback failure")
-  setChain chain
-  setStack stack
+preempt :: Sys ()
+preempt = getStatus >>= \case
+  Preemptible chain stack -> do 
+    setChain chain
+    setStack stack
+    setStatus Preempted
+  _ -> fail $ InternalError "non-preemptible state"
 
-addEssentials :: IntFlags -> IntFlags
-addEssentials x = x { INT.intCycle = True , INT.intReady = True }
 
 -- Call stack
 -- ---------------------------------------------------------------------
@@ -221,17 +168,25 @@ peek = getStack >>= \cs -> case cs of
 flush :: VM.State -> Sys ()
 flush x = pop >> push x
 
-running :: Sys Bool
-running = getStack >>= \cs -> case cs of
+isActive :: Sys Bool
+isActive = getStack >>= \cs -> case cs of
   []    -> return False
   x : _ -> return True
 
 fresh :: Tx.MessageCall -> Sys VM.State
 fresh msg = do
-  flags <- addEssentials <$> getInterrupts
-  let vm = (VM.initState msg) { VM.stIntFlags = flags }
+  let vm = VM.initState msg
   push vm
   return vm
+
+mustBeIdle :: Sys a -> Sys a
+mustBeIdle ma = ifM isActive (fail Busy) >> ma
+
+mustBeActive :: Sys a -> Sys a
+mustBeActive ma = ifM (not <$> isActive) (fail Idle) >> ma
+
+assertIdle = mustBeIdle $ return ()
+assertActive = mustBeActive $ return ()
 
 
 -- VM Interface
@@ -241,51 +196,33 @@ fresh msg = do
 call :: Tx.MessageCall -> Sys ()
 call msg = mustBeIdle $ do
   vm <- fresh msg
-  setRollbackPoint
   (vm', result) <- execute VM.call mutateChain onInterrupt vm
---  vm'' <- peek
---  E.interrupt . INT.Alert $ "Execution returned VM state: " ++ show vm'
---  E.interrupt . INT.Alert $ "Already had VM state: " ++ show vm''
- -- flush vm'
   case result of
     Left _        -> return ()
-    Right (Ok _)  -> pop >> setLast Nothing
-    Right (Err e) -> pop >> setLast Nothing >> fail (VMError e)
+    Right (Ok _)  -> pop >> setStatus Running
+    Right (Err e) -> pop >> setStatus Running >> fail (VMError e)
 
 -- | Resume the active call
 resume :: Sys ()
-resume = do
-  unlessM running $ fail Idle
-  setRollbackPoint -- We don't want to end up in the past
-  (vm, result) <- peek >>= execute VM.resume mutateChain onInterrupt
---  flush vm
+resume = mustBeActive $ do
+  status <- getStatus
+  when (status /= Preempted) makePreemptible
+  (_, result) <- peek >>= execute VM.resume mutateChain onInterrupt
   case result of
     Left _        -> return ()
-    Right (Ok _)  -> pop >> setLast Nothing
-    Right (Err e) -> pop >> setLast Nothing >> fail (VMError e)
+    Right (Ok _)  -> pop >> setStatus Running
+    Right (Err e) -> pop >> setStatus Running >> fail (VMError e)
 
 -- | Run a VM computation without interrupts, discarding the final state
 query :: VM a -> Sys a
-query ma = peek >>= E.query ma VMError Interrupted queryChain
+query ma = peek >>= Exec.query ma VMError Interrupted queryChain
 
 -- | Run a VM computation without interrupts, preserving the final state
 mutate :: VM a -> Sys a
 mutate ma = do
-  (st, x) <- peek >>= E.uninterruptible ma VMError Interrupted mutateChain
+  (st, x) <- peek >>= Exec.uninterruptible ma VMError Interrupted mutateChain
   flush st
   return x
-
-mustBeIdle :: Sys a -> Sys a
-mustBeIdle ma = ifM running (fail Busy) >> ma
-
-mustBeActive :: Sys a -> Sys a
-mustBeActive ma = ifM (not <$> running) (fail Idle) >> ma
-
-assertIdle :: Sys ()
-assertIdle = mustBeIdle $ return ()
-
-assertActive :: Sys ()
-assertActive = mustBeActive $ return ()
 
 
 -- Blockchain interface
@@ -312,62 +249,39 @@ queryChain ma = do
 -- Configiguration and monad state
 -- --------------------------------------------------------------------
 
-data Config = Config
-  { cInterrupts        :: IntFlags
-  , cInterruptAction   :: InterruptAction
-  , cInterruptPoint    :: InterruptPoint
-  } deriving (Show, Generic, NFData)
-
-data InterruptAction
-  = Echo    -- Pass interrupts upwards (real-time)
-  | Break   -- Break on interrupts
-  | Ignore  -- Silently drop interrupts
-  deriving (Eq, Show, Generic, NFData)
-
-data InterruptPoint
-  = Immediate -- Act as soon as the interrupt is received
-  | Preempt   -- Roll back to start of current cycle, then act
-  | Finalize  -- Wait until end of cycle before acting
-  deriving (Eq, Show, Generic, NFData)
-
 initState :: State
 initState = State
-  { stChain   = Blockchain.initState
-  , stStack   = []
-  , stMode    = Run
-  , stLast    = Nothing
-  , stConfig  = Config
-    { cInterrupts        = INT.defaults
-    , cInterruptAction   = Echo
-    , cInterruptPoint    = Preempt
+  { stChain  = Blockchain.initState
+  , stStack  = []
+  , stStatus = Running
+  , stConfig = Config
+    { cInterrupts  = I.defaults
+    , cStrategy    = Preempt
+    , cBreakpoints = []
     }
   }
 
-syncFlags :: Sys ()
-syncFlags = do
-  flags <- addEssentials <$> getInterrupts
-  updateStack . map $ \x -> x { VM.stIntFlags = flags }
+getInterruptAction    x = I.action x   <$> getInterrupts
+getStrategy             = cStrategy    <$> getConfig
+getInterrupts           = cInterrupts  <$> getConfig
+getBreakpoints          = cBreakpoints <$> getConfig
+setStrategy           x = updateConfig (\c -> c { cStrategy    = x })
+setInterrupts         x = updateConfig (\c -> c { cInterrupts  = x })
+setBreakpoints        x = updateConfig (\c -> c { cBreakpoints = x })
+updateInterrupts      f = getInterrupts  >>= setInterrupts  . f
+updateBreakpoints     f = getBreakpoints >>= setBreakpoints . f
+setInterruptAction  i x = updateInterrupts $ I.setAction i x
+setBreakpoint         x = updateBreakpoints $ \xs -> nub (x:xs)
+clearBreakpoint       x = updateBreakpoints $ \xs -> delete x xs
 
-enableInterrupt       x = updateInterrupts (INT.enable x)
-disableInterrupt      x = updateInterrupts (INT.disable x)
-getInterruptAction      = cInterruptAction <$> getConfig
-getInterruptPoint       = cInterruptPoint  <$> getConfig
-getInterrupts           = cInterrupts      <$> getConfig
-setInterruptAction    x = updateConfig (\c -> c { cInterruptAction = x })
-setInterruptPoint     x = updateConfig (\c -> c { cInterruptPoint  = x })
-setInterrupts         x = updateConfig (\c -> c { cInterrupts      = x }) >> syncFlags
-updateInterrupts      f = getInterrupts >>= setInterrupts . f
-
-getChain       = stChain   <$> getState
-getStack       = stStack   <$> getState
-getMode        = stMode    <$> getState
-getLast        = stLast    <$> getState
-getConfig      = stConfig  <$> getState
-setChain     x = updateState (\st -> st { stChain   = x }) :: Sys ()
-setStack     x = updateState (\st -> st { stStack   = x }) :: Sys ()
-setMode      x = updateState (\st -> st { stMode    = x }) :: Sys ()
-setLast      x = updateState (\st -> st { stLast    = x }) :: Sys ()
-setConfig    x = updateState (\st -> st { stConfig  = x }) :: Sys ()
-updateStack  f = getStack  >>= setStack . f
+getChain       = stChain  <$> getState
+getStack       = stStack  <$> getState
+getStatus      = stStatus <$> getState
+getConfig      = stConfig <$> getState
+setChain     x = updateState (\st -> st { stChain  = x }) :: Sys ()
+setStack     x = updateState (\st -> st { stStack  = x }) :: Sys ()
+setStatus    x = updateState (\st -> st { stStatus = x }) :: Sys ()
+setConfig    x = updateState (\st -> st { stConfig = x }) :: Sys ()
+updateStack  f = getStack  >>= setStack  . f
 updateConfig f = getConfig >>= setConfig . f
 
