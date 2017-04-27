@@ -9,9 +9,10 @@ import Data.List
 import Data.Ord
 
 import qualified Test.Fluidity.EVM.Data.BytecodeSpec as BytecodeSpec
+import qualified Test.Fluidity.EVM.Core.SystemSpec as SystemSpec
 
-main = do
-  xs <- specs
-  bytecode <- BytecodeSpec.specs
-  defaultMain $ testGroup "aevm" [bytecode]
+main = sequence
+  [ BytecodeSpec.specs
+  , SystemSpec.specs
+  ] >>= defaultMain . testGroup "aevm" 
 

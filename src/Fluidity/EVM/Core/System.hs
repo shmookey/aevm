@@ -256,6 +256,7 @@ call msg = mustBeIdle $ do
 resume :: Sys ()
 resume = do
   unlessM running $ fail Idle
+  setRollbackPoint -- We don't want to end up in the past
   (vm, result) <- peek >>= execute VM.resume mutateChain onInterrupt
 --  flush vm
   case result of
