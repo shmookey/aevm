@@ -106,6 +106,9 @@ setAction x i c = case i of
   ISStore -> c { iSStore = x }
   IStop   -> c { iStop   = x }
 
+setAll :: Action -> IntConfig -> IntConfig
+setAll x z = foldl (\a t -> setAction x t a) z types
+
 echo :: IntType -> IntConfig -> IntConfig
 echo   = setAction Echo
 

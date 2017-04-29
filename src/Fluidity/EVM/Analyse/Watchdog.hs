@@ -31,6 +31,8 @@ data Event
   | StorageRead Int (ByteString, Expr) (ByteString, Expr)
   | Call Int (ByteString, Expr) (Integer, Expr) (ByteString, Expr)
   | GenericEvent String
+  | Return (ByteString, Expr)
+  | Stop
   deriving (Show, Generic, NFData)
 
 instance Structured Event where
@@ -56,8 +58,14 @@ instance Structured Event where
               ~- "TO="  ~~ emph "((" ~- showExpr toE  ~- emph "))"
               ~- "VAL=" ~~ emph "((" ~- showExpr amtE ~- emph "))"
 
+    Return (bs, bsE) ->
+      Op.Return ~- bs ~- emph "((" ~- showExpr bsE ~- emph "))"
+
+    Stop -> fmt Op.Stop
+
     MethodDetected x -> 
       "Callable method detected with hash:" ~- x
+
 
 
 showE = simplify . convert
@@ -95,6 +103,10 @@ analyse vi pc = case vi of
       bsE  = showE $ prov bs
     in
       return $ Call pc (bytes to, toE) (uint amt, amtE) (toBytes bs, bsE)
+
+  INT.Return bs -> return $ Return (toBytes bs, showE $ prov bs)
+
+  INT.Stop -> return Stop
 
   _ -> []
 

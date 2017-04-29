@@ -29,10 +29,12 @@ data EVM
   | Step
   | BreakAt Integer
   | Call Address Value Value ByteField
-  | Inspect Inspect
+  | Enter Address Value Value ByteField
+  | Show EVMShow
   | Interrupt Interrupt
   | Paths
   | Abort
+  | Breakpoint Breakpoint
 
 data CallData
   = RawCall ByteString
@@ -43,15 +45,22 @@ data MethodArg
   | BoolArg Bool
   | AddrArg ByteString
 
-data Inspect
-  = InspectStack
-  | InspectMemory
-  | InspectStorage
-  | InspectCall
-  | InspectCode (Maybe CodeRef)
+data Breakpoint
+  = BreakpointShow
+  | BreakpointOn Int
+  | BreakpointOff Int
+  | BreakpointClear
+
+data EVMShow
+  = ShowStack
+  | ShowMemory
+  | ShowStorage
+  | ShowCall
+  | ShowCode (Maybe Slice)
 
 data Interrupt
-  = InterruptOn [IntType]
+  = InterruptEcho [IntType]
+  | InterruptBreak [IntType]
   | InterruptOff [IntType]
   | InterruptShow
   | InterruptAction Action
@@ -142,7 +151,7 @@ data SetRef
   = SetAlias String
   | SetRange Address
 
-type Slice = (Maybe Integer, Maybe Integer)
+type Slice = (Maybe Int, Maybe Int)
 
 type PostProcess = ([Filter], Maybe SaveTarget)
 
@@ -178,48 +187,50 @@ complete (revline, partial) =
       in 
         map (\c -> Completion c (last $ words c) True) (filter (isPrefixOf line) elems)
 
-    topLevel      = ("",                      ["chain", "evm", "mon", "par", "state", "walk", ":help", ":quit"])
-    evmMenu       = ("evm",                   ["abort", "breakat", "call", "go", "inspect", "interrupt", "paths", "step"])
-    inspectMenu   = ("evm inspect",           ["call", "code", "memory", "stack", "storage"])
-    interruptMenu = ("evm interrupt",         ["action", "off", "on", "point", "show"])
-    intOnMenu     = ("evm interrupt on",      interrupts)
-    intOffMenu    = ("evm interrupt off",     interrupts)
-    intActMenu    = ("evm interrupt action",  ["break", "echo", "ignore"])
-    intPointMenu  = ("evm interrupt point",   ["finalize", "immediate", "preempt"])
-    chainMenu     = ("chain",                 ["account", "block"])
-    blockMenu     = ("chain block",           ["commit", "list", "show"])
-    accountMenu   = ("chain account",         ["balance", "code", "drop", "list", "show", "storage"])
-    codeMenu      = ("chain account code",    ["disassemble", "hexdump"])
-    balanceMenu   = ("chain account balance", ["get", "set"])
-    storageMenu   = ("chain account storage", ["get", "getkey", "setkey"])
-    parMenu       = ("par",                   ["call", "set"])
-    parsetMenu    = ("par set",               ["drop", "list", "show", "showstorage"])
-    monitorMenu   = ("mon",                   ["on", "off"])
-    stateMenu     = ("state",                 ["drop", "list","load","save"])
-    walkMenu      = ("walk",                  ["match"])
+    topLevel       = ("",                       ["chain", "evm", "mon", "par", "state", "walk", ":help", ":quit"])
+    evmMenu        = ("evm",                    ["abort", "breakat", "breakpoint", "call", "enter", "go", "interrupt", "paths", "show", "step"])
+    breakpointMenu = ("evm breakpoint",         ["clear", "off", "on", "show"])
+    evmShowMenu    = ("evm show",               ["call", "code", "memory", "stack", "storage"])
+    interruptMenu  = ("evm interrupt",          ["break", "echo", "off", "strategy", "show"])
+    intBreakMenu   = ("evm interrupt break",    interrupts)
+    intEchoMenu    = ("evm interrupt echo",     interrupts)
+    intOffMenu     = ("evm interrupt off",      interrupts)
+    intStratMenu   = ("evm interrupt strategy", ["immediate", "preempt", "wait"])
+    chainMenu      = ("chain",                  ["account", "block"])
+    blockMenu      = ("chain block",            ["commit", "list", "show"])
+    accountMenu    = ("chain account",          ["balance", "code", "drop", "list", "show", "storage"])
+    codeMenu       = ("chain account code",     ["disassemble", "hexdump"])
+    balanceMenu    = ("chain account balance",  ["get", "set"])
+    storageMenu    = ("chain account storage",  ["get", "getkey", "setkey"])
+    parMenu        = ("par",                    ["call", "set"])
+    parsetMenu     = ("par set",                ["drop", "list", "show", "showstorage"])
+    monitorMenu    = ("mon",                    ["on", "off"])
+    stateMenu      = ("state",                  ["drop", "list","load","save"])
+    walkMenu       = ("walk",                   ["match"])
 
     interrupts    = [ "call",  "cycle",  "emit",  "jump",   "jumpi"
                     , "ready", "return", "sload", "sstore", "stop" ]
 
   in do
     return . (,) partial $ case words line of
-      "chain" :r -> case r of "block"     :r -> menu blockMenu
-                              "account"   :r -> case r of "balance" :r -> menu balanceMenu
-                                                          "code"    :r -> menu codeMenu
-                                                          "storage" :r -> menu storageMenu
-                                                          _            -> menu accountMenu
-                              _              -> menu chainMenu
-      "evm"   :r -> case r of "inspect"   :r -> menu inspectMenu
-                              "interrupt" :r -> case r of "off"     :r -> menu intOffMenu
-                                                          "on"      :r -> menu intOnMenu
-                                                          "action"  :r -> menu intActMenu
-                                                          "point"   :r -> menu intPointMenu
-                                                          _            -> menu interruptMenu
-                              _              -> menu evmMenu
-      "mon"   :r -> case r of _              -> menu monitorMenu
-      "par"   :r -> case r of "set"       :r -> menu parsetMenu
-                              _              -> menu parMenu
-      "state" :r -> case r of _              -> menu stateMenu
-      "walk"  :r -> case r of _              -> menu walkMenu
+      "chain" :r -> case r of "block"      :r -> menu blockMenu
+                              "account"    :r -> case r of "balance"  :r -> menu balanceMenu
+                                                           "code"     :r -> menu codeMenu
+                                                           "storage"  :r -> menu storageMenu
+                                                           _             -> menu accountMenu
+                              _               -> menu chainMenu
+      "evm"   :r -> case r of "breakpoint" :r -> menu breakpointMenu
+                              "show"       :r -> menu evmShowMenu
+                              "interrupt"  :r -> case r of "break"    :r -> menu intBreakMenu
+                                                           "echo"     :r -> menu intEchoMenu
+                                                           "off"      :r -> menu intOffMenu
+                                                           "strategy" :r -> menu intStratMenu
+                                                           _             -> menu interruptMenu
+                              _               -> menu evmMenu
+      "mon"   :r -> case r of _               -> menu monitorMenu
+      "par"   :r -> case r of "set"        :r -> menu parsetMenu
+                              _               -> menu parMenu
+      "state" :r -> case r of _               -> menu stateMenu
+      "walk"  :r -> case r of _               -> menu walkMenu
       _          -> menu topLevel
 

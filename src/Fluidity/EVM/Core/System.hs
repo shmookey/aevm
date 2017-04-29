@@ -110,7 +110,9 @@ onInterrupt i st = beforeBreakpoints i $ do
                              Ignore -> return Nothing
 
     Preempt -> do
-      case i of { I.Cycle _ -> makePreemptible ; _ -> return () }
+      case i of I.Cycle _ -> makePreemptible
+                I.Ready   -> makePreemptible
+                _         -> return () 
       case act of Echo   -> preempt >> interrupt i >> return Nothing
                   Break  -> preempt >> return (Just i)
                   Ignore -> return Nothing

@@ -1,0 +1,31 @@
+TODO
+
+features and bugfixes
+------------------------------------------------------------------------
+
+block editing
+watchdog for variable jumps
+breakpoint commands
+command aliases
+walk command
+event patterns
+unified value formatter
+deduplicate log history
+transactions
+call ids
+batch progress indicator
+remove Outcome, show path trace instead
+default menu items
+smart formatting in prompt
+unboxed values
+reentrant calls
+
+done
+------------------------------------------------------------------------
+
+watchdog for return and stop
+evm "enter" command
+fix command error caret
+rename inspect to show
+disassembly slices
+

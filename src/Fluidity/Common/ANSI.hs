@@ -1,6 +1,8 @@
 module Fluidity.Common.ANSI where
 
 import System.Console.ANSI
+import Data.List.Split (splitOn)
+import Data.List (dropWhile)
 import qualified Data.Text as T
 
 import Text.Structured (Structured(fmt), block, typeset, (~-), (~~))
@@ -31,4 +33,11 @@ colouringWheel = cycle $ map ((.) TS.toString)
 
 emph :: String -> String
 emph = TS.toString . embolden . highlight White
+
+
+stripColours :: String -> String
+stripColours str = case splitOn "\ESC" str of
+  []     -> ""
+  x : [] -> x
+  x : xs -> x ++ (concat $ map (drop 1 . dropWhile (/= 'm')) xs)
 

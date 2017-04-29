@@ -15,7 +15,7 @@ import Control.Monad.Result
 import Confound.Methods (methodHash')
 import Fluidity.Common.Binary (fromHex, fromHexOnly, unroll, padBytes, toBytes, roll)
 import Fluidity.EVM.Data.ByteField (ByteField, fromByteString)
-import Fluidity.EVM.Data.Value
+import Fluidity.EVM.Data.Value hiding (int)
 import Fluidity.EVM.Data.Prov (Prov(Usr))
 import Fluidity.EVM.REPL.Command
 import Fluidity.EVM.Core.Interrupt (Action, IntType)
@@ -64,18 +64,35 @@ command = P.choice
 cmdEVM :: Parse EVM
 cmdEVM = 
   let
-    cmdInspect :: Parse Inspect
-    cmdInspect = do
-      keyword "inspect"
+    cmdShow :: Parse EVMShow
+    cmdShow = do
+      keyword "show"
       space
       P.choice
-        [ const InspectStack   <$> keyword "stack"  
-        , const InspectMemory  <$> keyword "memory" 
-        , const InspectStorage <$> keyword "storage" 
-        , const InspectCall    <$> keyword "call"
+        [ const ShowStack   <$> keyword "stack"  
+        , const ShowMemory  <$> keyword "memory" 
+        , const ShowStorage <$> keyword "storage" 
+        , const ShowCall    <$> keyword "call"
         , do keyword "code"
-             ref <- P.optionMaybe (space >> codeRef)
-             return $ InspectCode ref
+             ref <- P.optionMaybe (space >> slice)
+             return $ ShowCode ref
+        ]
+
+    cmdBreakpoint :: Parse Breakpoint
+    cmdBreakpoint = do
+      keyword "breakpoint"
+      space
+      P.choice
+        [ const BreakpointShow <$> keyword "show" 
+        , const BreakpointClear <$> keyword "clear" 
+        , do keyword "off"
+             space
+             x <- int
+             return $ BreakpointOff x
+        , do keyword "on"
+             space
+             x <- int
+             return $ BreakpointOn x
         ]
 
     cmdInterrupt :: Parse Interrupt
@@ -84,20 +101,21 @@ cmdEVM =
       space
       P.choice
         [ const InterruptShow <$> keyword "show" 
+        , do keyword "break"
+             space
+             xs <- interruptType `sepBy` space
+             return . InterruptBreak $ concat xs
+        , do keyword "echo"
+             space
+             xs <- interruptType `sepBy` space
+             return . InterruptEcho $ concat xs
         , do keyword "off"
              space
              xs <- interruptType `sepBy` space
              return . InterruptOff $ concat xs
-        , do keyword "on"
+        , do keyword "strategy"
              space
-             xs <- interruptType `sepBy` space
-             return . InterruptOn $ concat xs
-        , do keyword "action"
-             space
-             InterruptAction <$> interruptAction
-        , do keyword "point"
-             space
-             InterruptStrategy <$> interruptPoint
+             InterruptStrategy <$> interruptStrategy
         ]
 
     interruptType :: Parse [IntType]
@@ -120,11 +138,22 @@ cmdEVM =
                        , ("echo",   I.Echo)
                        , ("ignore", I.Ignore) ]
 
-    interruptPoint :: Parse Strategy
-    interruptPoint = P.choice $ map (\(k,v) -> const v <$> keyword k) ptTypes
+    interruptStrategy :: Parse Strategy
+    interruptStrategy = P.choice $ map (\(k,v) -> const v <$> keyword k) ptTypes
       where ptTypes = [ ("immediate", Sys.Immediate)
                       , ("wait",      Sys.Wait)
                       , ("preempt",   Sys.Preempt) ]
+
+    cmdCallLike :: String -> (Address -> Value -> Value -> ByteField -> EVM) -> Parse EVM
+    cmdCallLike x f = do
+      keyword x
+      space
+      addr  <- address
+      space
+      val   <- callValue
+      gas   <- P.option defaultGas (space >> callGas)
+      cdata <- P.option defaultCallData (space >> callData)
+      return $ f addr val gas cdata
 
   in do
     keyword "evm"
@@ -138,17 +167,11 @@ cmdEVM =
            space
            x <- integer
            return $ BreakAt x
-      , do keyword "call"
-           space
-           addr  <- address
-           space
-           val   <- callValue
-           gas   <- P.option defaultGas (space >> callGas)
-           cdata <- P.option defaultCallData (space >> callData)
-           return $ Call addr val gas cdata
-
-      , Inspect   <$> cmdInspect
-      , Interrupt <$> cmdInterrupt
+      , cmdCallLike "call" Call
+      , cmdCallLike "enter" Enter
+      , Breakpoint <$> cmdBreakpoint
+      , Show    <$> cmdShow
+      , Interrupt  <$> cmdInterrupt
       ]
 
 
@@ -426,14 +449,6 @@ encodeCallData cd =
 -- ---------------------------------------------------------------------
 
 
-codeRef :: Parse CodeRef
-codeRef = do
-  addr <- P.optionMaybe address
-  sect <- P.optionMaybe slice
-  case (addr, sect) of
-    (Nothing, Nothing) -> fail "coderef"
-    _                  -> return (addr, sect)
-
 currencyAmount :: Parse Integer
 currencyAmount = litInt -- TODO: units
 
@@ -452,11 +467,11 @@ slice :: Parse Slice
 slice = do
   openBracket
   optionalSpace
-  start <- P.optionMaybe litInt
+  start <- P.optionMaybe int
   optionalSpace
   colon
   optionalSpace
-  end <- P.optionMaybe litInt
+  end <- P.optionMaybe int
   optionalSpace
   closeBracket
   return (start, end)
@@ -534,6 +549,9 @@ hex = (P.try (nakedHex <|> litHex)) <?> "even-length hex string"
 
 integer :: Parse Integer
 integer = litInt <|> fmap roll hex
+
+int :: Parse Int
+int = fromInteger <$> integer
 
 nakedHex :: Parse ByteString
 nakedHex = token $ \t -> case t of

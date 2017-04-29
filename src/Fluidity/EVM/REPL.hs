@@ -78,7 +78,7 @@ instance Structured Error where
     Quit                -> fmt "Quit"
     ParseError s pe ->
       let
-        pad i = take (i+s-19) $ repeat ' '
+        pad i = take (i+s-1) $ repeat ' '
         cur i = pad i ~~ "^\n"
         (i,x,d) = case pe of Parser.ParseError i x d -> (i,x,d)
                              Parser.LexError i x     -> (i,x,[])
@@ -117,7 +117,7 @@ repl = untilError . recoverWith onError $ do
   if line == ""
   then return ()
   else do
-    cmd   <- point . mapError (ParseError $ length txt) $ Parser.parse line
+    cmd   <- point . mapError (ParseError . length $ stripColours txt) $ Parser.parse line
     case cmd of
       Cmd.Chain    x -> REPL.Chain.runCommand    x
       Cmd.EVM      x -> REPL.EVM.runCommand      x
@@ -165,7 +165,7 @@ haskeline ma = safely . HL.runInputT settings $ HL.withInterrupt ma
 
 getPrompt :: REPL String
 getPrompt = withDefault "aevm(error)>" $ do
-  c <- query Control.running
+  c <- querySys Sys.isActive
   if not c then return "aevm> "
   else do
     pc       <- queryVM VM.getPC

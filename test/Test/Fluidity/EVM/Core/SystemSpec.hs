@@ -30,8 +30,8 @@ import Fluidity.EVM.Data.Prov (Prov(Nul))
 import Fluidity.EVM.Data.Transaction (MessageCall)
 import Fluidity.EVM.Data.Value
 import qualified Fluidity.EVM.Core.Blockchain as Blockchain
-import qualified Fluidity.EVM.Core.Interrupt as INT
-import qualified Fluidity.EVM.Core.System as Sys
+import qualified Fluidity.EVM.Core.Interrupt as I
+import qualified Fluidity.EVM.Core.System as S
 import qualified Fluidity.EVM.Core.VM as VM
 import qualified Fluidity.EVM.Data.Account as Account
 import qualified Fluidity.EVM.Data.Bytecode as Bytecode
@@ -47,34 +47,41 @@ specs = testSpec "Fluidity.EVM.Core.System" $ do
 resumeSpec :: Spec
 resumeSpec = do
   describe "resume<Preempt,Break,PC=2>" $ do
-    let x # f = test x f Sys.resume id
-    "break after first instruction" # \case Done x            -> ok
-    "break without error"           # \case DoneOk x          -> ok
-    "preempted running mode"        # \case DSt (Preempted _) -> ok
-    "program counter unchanged"     # \case DSt (PC x)        -> x `shouldBe` 2
+    let x # f = test x f S.resume id
+    "break, not suspend"            # \case Done x        -> ok
+    "break without error"           # \case DoneOk x      -> ok
+    "preempted running mode"        # \case DSt Preempted -> ok
+    "program counter unchanged"     # \case DSt (PC x)    -> x `shouldBe` 2
   
   describe "resume<Immediate,Break,PC=2>" $ do
-    let x # f = test x f Sys.resume $ withIntPoint Sys.Immediate
-    "break after first instruction" # \case Done x      -> ok
+    let x # f = test x f S.resume $ withStrategy S.Immediate
+    "break, not suspend"            # \case Done x      -> ok
+    "break without error"           # \case DoneOk x    -> ok
+    "program counter incremented"   # \case DSt (PC x)  -> x `shouldBe` 4
+    "running mode unaffected"       # \case DSt Running -> ok
+  
+  describe "resume<Wait,Break,PC=2>" $ do
+    let x # f = test x f S.resume $ withStrategy S.Wait
+    "break, not suspend"            # \case Done x      -> ok
     "break without error"           # \case DoneOk x    -> ok
     "program counter incremented"   # \case DSt (PC x)  -> x `shouldBe` 4
     "running mode unaffected"       # \case DSt Running -> ok
   
   describe "resume<Preempt,Echo,PC=2>" $ do
-    let x # f = test x f Sys.resume $ withIntAction Sys.Echo
-    "cont after first instruction"  # \case ContInt _         -> ok
-    "preempted running mode"        # \case CSt (Preempted _) -> ok
-    "program counter unchanged"     # \case CSt (PC x)        -> x `shouldBe` 2
+    let x # f = test x f S.resume $ allIntActions I.Echo
+    "suspend, not break"            # \case ContInt _     -> ok
+    "preempted running mode"        # \case CSt Preempted -> ok
+    "program counter unchanged"     # \case CSt (PC x)    -> x `shouldBe` 2
 
 
 ok = return () :: Expectation
 no = expectationFailure
-run x f = runSys x (f sys)
+run x f = runS x (f sys)
 
---test :: String -> (Interruption Identity (Interrupt, Sys.State) (Sys.State, Result Sys.Error ()) -> Expectation) -> Sys () -> (Sys.State -> Sys.State) -> Expectation
+--test :: String -> (Interruption Identity (Interrupt, S.State) (S.State, Result S.Error ()) -> Expectation) -> S () -> (S.State -> S.State) -> Expectation
 test lbl check task alter = it lbl $
   let
-    result = runSys task (alter sys)
+    result = runS task (alter sys)
     catchable = do
       return $! check result
       return ()
@@ -89,47 +96,51 @@ pattern DSt          x <- Done (x, _)
 pattern CSt          x <- Cont (_, x) _
 -- VM state
 pattern PC           x <- VM (VM.State { VM.stPC = x })
-pattern VM           x <- Sys.State { Sys.stStack = x : _ }
+pattern VM           x <- S.State { S.stStack = x : _ }
 -- Running modes
-pattern Mode         x <- Sys.State { Sys.stMode  = x }
-pattern Preempted    x <- Mode (Sys.Preempted x)
-pattern Running        <- Mode Sys.Run
-pattern Finalizing i x <- Mode (Sys.Finalizing i x)
+pattern Status       x <- S.State { S.stStatus  = x }
+pattern Preempted      <- Status S.Preempted
+pattern Running        <- Status S.Running
+pattern Waiting i x    <- Status (S.Waiting i x)
 
 resultState = \case { DSt x -> x ; CSt x -> x }
 
-withIntAction :: Sys.InterruptAction -> Sys.State -> Sys.State
-withIntAction x s = s { Sys.stConfig = (Sys.stConfig s) { Sys.cInterruptAction = x } }
+allIntActions :: I.Action -> S.State -> S.State
+allIntActions x s = 
+  s { S.stConfig = 
+    (S.stConfig s) { 
+      S.cInterrupts = I.setAll x (S.cInterrupts $ S.stConfig s)
+    } 
+  }
 
-withIntPoint :: Sys.InterruptPoint -> Sys.State -> Sys.State
-withIntPoint x s = s { Sys.stConfig = (Sys.stConfig s) { Sys.cInterruptPoint = x } }
+withStrategy :: S.Strategy -> S.State -> S.State
+withStrategy x s = s { S.stConfig = (S.stConfig s) { S.cStrategy = x } }
 
 -- A complete system state definition
-sys :: Sys.State
-sys = Sys.State
-  { Sys.stMode  = Sys.Run
-  , Sys.stLast  = Just (blockchain, [vm])
-  , Sys.stChain = blockchain
-  , Sys.stStack =
+sys :: S.State
+sys = S.State
+  { S.stStatus = S.Running
+  , S.stChain  = blockchain
+  , S.stStack  =
     [ vm { VM.stPC    = 2
          , VM.stStack = [mkVal8 0x60]
          }
     ]
-  , Sys.stConfig = Sys.Config
-    { Sys.cInterruptAction = Sys.Break
-    , Sys.cInterruptPoint  = Sys.Preempt
-    , Sys.cInterrupts      = INT.IntFlags
-      { INT.intAlert  = True
-      , INT.intCall   = True
-      , INT.intCycle  = True
-      , INT.intEmit   = True
-      , INT.intJump   = True
-      , INT.intJumpI  = True
-      , INT.intReady  = True
-      , INT.intReturn = True
-      , INT.intSLoad  = True
-      , INT.intSStore = True
-      , INT.intStop   = True
+  , S.stConfig = S.Config
+    { S.cBreakpoints = []
+    , S.cStrategy    = S.Preempt
+    , S.cInterrupts  = I.IntConfig
+      { I.iAlert  = I.Break
+      , I.iCall   = I.Break
+      , I.iCycle  = I.Break
+      , I.iEmit   = I.Break
+      , I.iJump   = I.Break
+      , I.iJumpI  = I.Break
+      , I.iReady  = I.Break
+      , I.iReturn = I.Break
+      , I.iSLoad  = I.Break
+      , I.iSStore = I.Break
+      , I.iStop   = I.Break
       }
     }
   }
@@ -181,19 +192,6 @@ vm = VM.State
     , Tx.msgGas    = mkVal8 0xcc
     , Tx.msgData   = mempty
     }
-  , VM.stIntFlags = INT.IntFlags
-    { INT.intAlert  = True
-    , INT.intCall   = True
-    , INT.intCycle  = True
-    , INT.intEmit   = True
-    , INT.intJump   = True
-    , INT.intJumpI  = True
-    , INT.intReady  = True
-    , INT.intReturn = True
-    , INT.intSLoad  = True
-    , INT.intSStore = True
-    , INT.intStop   = True
-    }
   }
 
 testContract = assemble
@@ -209,7 +207,8 @@ testContract = assemble
   , Bytecode.Stop                          -- 0x13
   ]
 
-runSys :: Sys a -> Sys.State -> Interruption Identity (INT.Interrupt, Sys.State) (Sys.State, Result Sys.Error a)
-runSys ma st = runIdentity 
-             . runInterruptibleT 
-             $ runResultantT ma st
+runS :: Sys a -> S.State -> Interruption Identity (I.Interrupt, S.State) (S.State, Result S.Error a)
+runS ma st = runIdentity 
+           . runInterruptibleT 
+           $ runResultantT ma st
+

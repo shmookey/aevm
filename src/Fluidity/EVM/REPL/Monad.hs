@@ -114,7 +114,7 @@ yield task = do
   setControlState st
   case r of
     Left (x, _)   -> putStrLn $ "Suspended by interrupt: " ++ show x
-    Right (Ok _)  -> putStrLn "Done"
+    Right (Ok _)  -> return ()
     Right (Err e) -> fail $ ControlError e
 
 -- | Run a Control computation without interrupts, discarding the final state
