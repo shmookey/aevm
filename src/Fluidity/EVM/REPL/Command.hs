@@ -75,7 +75,7 @@ data Chain
   | ChainAccount Account
 
 data Block
-  = BlockCommit
+  = BlockCommit Integer
   | BlockShow (Maybe Integer)
   | BlockList
 
@@ -93,6 +93,7 @@ data Account
 
 data Walk
   = WalkMatch Address
+  | WalkAddress Address Value
 
 -- State
 -- ---------------------------------------------------------------------
@@ -206,10 +207,12 @@ complete (revline, partial) =
     parsetMenu     = ("par set",                ["drop", "list", "show", "showstorage"])
     monitorMenu    = ("mon",                    ["on", "off"])
     stateMenu      = ("state",                  ["drop", "list","load","save"])
-    walkMenu       = ("walk",                   ["match"])
+    walkMenu       = ("walk",                   ["match", lblAddr])
 
-    interrupts    = [ "call",  "cycle",  "emit",  "jump",   "jumpi"
-                    , "ready", "return", "sload", "sstore", "stop" ]
+    interrupts     = [ "call",  "cycle",  "emit",  "jump",   "jumpi"
+                     , "ready", "return", "sload", "sstore", "stop" ]
+
+    lblAddr        = "(address or prefix)"
 
   in do
     return . (,) partial $ case words line of

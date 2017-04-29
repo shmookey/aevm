@@ -5,7 +5,8 @@
 module Test.Fluidity.EVM.Core.SystemSpec where
 
 import Data.Word (Word8)
-import Control.Exception (SomeException, try)
+import Control.DeepSeq
+import Control.Exception (SomeException, PatternMatchFail, try)
 import Data.ByteString (ByteString)
 import Test.Hspec
 import Test.Tasty
@@ -37,6 +38,7 @@ import qualified Fluidity.EVM.Data.Account as Account
 import qualified Fluidity.EVM.Data.Bytecode as Bytecode
 import qualified Fluidity.EVM.Data.ByteField as BF
 import qualified Fluidity.EVM.Data.Transaction as Tx
+import qualified Fluidity.EVM.Text.Dump as Dump
 
 import TestData.EVM.Contracts
 
@@ -46,48 +48,80 @@ specs = testSpec "Fluidity.EVM.Core.System" $ do
 
 resumeSpec :: Spec
 resumeSpec = do
-  describe "resume<Preempt,Break,PC=2>" $ do
-    let x # f = test x f S.resume id
-    "break, not suspend"            # \case Done x        -> ok
-    "break without error"           # \case DoneOk x      -> ok
-    "preempted running mode"        # \case DSt Preempted -> ok
-    "program counter unchanged"     # \case DSt (PC x)    -> x `shouldBe` 2
+  describe "resume<Running,Preempt,I={All=B},PC=0(Push1)>" $ do
+    let x # f = test' x f S.resume
+    "break, not suspend"            # \case Done x         -> ok
+    "break without error"           # \case DoneOk x       -> ok
+    "preempted running mode"        # \case DSt (Status x) -> x `shouldBe` S.Preempted
+    "program counter unchanged"     # \case DSt (PC x)     -> x `shouldBe` 2
   
-  describe "resume<Immediate,Break,PC=2>" $ do
-    let x # f = test x f S.resume $ withStrategy S.Immediate
-    "break, not suspend"            # \case Done x      -> ok
-    "break without error"           # \case DoneOk x    -> ok
-    "program counter incremented"   # \case DSt (PC x)  -> x `shouldBe` 4
-    "running mode unaffected"       # \case DSt Running -> ok
+  describe "resume<Running,Immediate,I={All=B},PC=0(Push1)>" $ do
+    let x # f = test' x f $ do
+                  S.setStrategy S.Immediate
+                  S.resume
+    "break, not suspend"            # \case Done x         -> ok
+    "break without error"           # \case DoneOk x       -> ok
+    "program counter incremented"   # \case DSt (PC x)     -> x `shouldBe` 2
+    "running mode 'running'"        # \case DSt (Status x) -> x `shouldBe` S.Running
   
-  describe "resume<Wait,Break,PC=2>" $ do
-    let x # f = test x f S.resume $ withStrategy S.Wait
-    "break, not suspend"            # \case Done x      -> ok
-    "break without error"           # \case DoneOk x    -> ok
-    "program counter incremented"   # \case DSt (PC x)  -> x `shouldBe` 4
-    "running mode unaffected"       # \case DSt Running -> ok
+  describe "resume<Running,Wait,I={All=B},PC=0(Push1)>" $ do
+    let x # f = test' x f $ do
+                  S.setStrategy S.Wait
+                  S.resume
+    "break, not suspend"            # \case Done x         -> ok
+    "break without error"           # \case DoneOk x       -> ok
+    "program counter incremented"   # \case DSt (PC x)     -> x `shouldBe` 2
+    "running mode 'running'"        # \case DSt (Status x) -> x `shouldBe` S.Running
   
-  describe "resume<Preempt,Echo,PC=2>" $ do
-    let x # f = test x f S.resume $ allIntActions I.Echo
-    "suspend, not break"            # \case ContInt _     -> ok
-    "preempted running mode"        # \case CSt Preempted -> ok
-    "program counter unchanged"     # \case CSt (PC x)    -> x `shouldBe` 2
+  describe "resume<Running,Preempt,I={All=E},PC=2(Push1)>" $ do
+    let x # f = test' x f $ do
+                  S.updateInterrupts $ I.setAll I.Echo
+                  S.resume
+    "suspend, not break"            # \case ContInt _      -> ok
+    "preempted running mode"        # \case CSt (Status x) -> x `shouldBe` S.Preempted
+    "program counter unchanged"     # \case CSt (PC x)     -> x `shouldBe` 2
+
+  describe "resume<Preempted,Preempt,I={Stop=E,JumpI=E},PC=7(JumpI)>" $ do
+    let x # f = test' x f $ do
+                  S.mutate . VM.push $ mkVal8 0
+                  S.mutate . VM.push $ mkVal8 0
+                  S.mutate $ VM.setPC 0x07
+                  S.setStatus S.Preempted
+                  S.updateInterrupts $ I.setAll I.Ignore
+                  S.setInterruptAction I.Echo I.IJumpI
+                  S.setInterruptAction I.Echo I.IStop
+                  S.resume
+    "suspend, not break"            # \case ContInt _      -> ok
+    "preempted running mode"        # \case CSt (Status x) -> x `shouldBe` S.Preempted
+    "pc == 8"                       # \case CSt (PC x)     -> x `shouldBe` 0x08
+    "interrupt == Stop"             # \case ContInt x      -> x `shouldBe` I.Stop
 
 
 ok = return () :: Expectation
 no = expectationFailure
 run x f = runS x (f sys)
 
+type TestInterruption = Interruption Identity (Interrupt, S.State) (S.State, Result S.Error ())
+type TestInt = Interruption Identity (Interrupt, S.State) (S.State, Result S.Error ())
+
 --test :: String -> (Interruption Identity (Interrupt, S.State) (S.State, Result S.Error ()) -> Expectation) -> S () -> (S.State -> S.State) -> Expectation
+test :: String -> (TestInt -> IO ()) -> Sys () -> (S.State -> S.State) -> SpecWith ()
 test lbl check task alter = it lbl $
   let
-    result = runS task (alter sys)
-    catchable = do
-      return $! check result
-      return ()
+    result   = runS task (alter sys)
+    catchable = check result
   in (try catchable :: IO (Either SomeException ())) >>= \case
     Left e  -> no $ show e ++ " " ++ show (resultState result)
     Right _ -> ok
+
+test' :: String -> (TestInt -> IO ()) -> Sys () -> SpecWith ()
+test' lbl check task = it lbl $ 
+  let
+    result    = runS task sys
+    catchable = check result
+  in (try catchable :: IO (Either PatternMatchFail ())) >>= \case
+    Left e  -> no $ show e ++ showResult result ++ "\n" ++ Dump.dumpCompact (resultState result)
+    Right r -> catchable
 
 -- Basic interruptions
 pattern DoneOk       x <- Done (_, Ok x)
@@ -105,6 +139,11 @@ pattern Waiting i x    <- Status (S.Waiting i x)
 
 resultState = \case { DSt x -> x ; CSt x -> x }
 
+showResult :: TestInt -> String
+showResult r = case r of
+  Done (_, x) -> show x
+  _           -> "did not get a result"
+
 allIntActions :: I.Action -> S.State -> S.State
 allIntActions x s = 
   s { S.stConfig = 
@@ -112,6 +151,9 @@ allIntActions x s =
       S.cInterrupts = I.setAll x (S.cInterrupts $ S.stConfig s)
     } 
   }
+
+withStatus :: S.Status -> S.State -> S.State
+withStatus x s = s { S.stStatus = x }
 
 withStrategy :: S.Strategy -> S.State -> S.State
 withStrategy x s = s { S.stConfig = (S.stConfig s) { S.cStrategy = x } }
@@ -121,11 +163,7 @@ sys :: S.State
 sys = S.State
   { S.stStatus = S.Running
   , S.stChain  = blockchain
-  , S.stStack  =
-    [ vm { VM.stPC    = 2
-         , VM.stStack = [mkVal8 0x60]
-         }
-    ]
+  , S.stStack  = [vm]
   , S.stConfig = S.Config
     { S.cBreakpoints = []
     , S.cStrategy    = S.Preempt

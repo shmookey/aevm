@@ -66,6 +66,7 @@ import qualified Fluidity.EVM.REPL.Meta     as REPL.Meta
 import qualified Fluidity.EVM.REPL.Monitor  as REPL.Monitor
 import qualified Fluidity.EVM.REPL.State    as REPL.State
 import qualified Fluidity.EVM.REPL.Parallel as REPL.Parallel
+import qualified Fluidity.EVM.REPL.Walk     as REPL.Walk
 
 
 type REPL = Fluidity.EVM.REPL.Monad.REPL
@@ -125,6 +126,7 @@ repl = untilError . recoverWith onError $ do
       Cmd.Monitor  x -> REPL.Monitor.runCommand  x
       Cmd.Parallel x -> REPL.Parallel.runCommand x
       Cmd.State    x -> REPL.State.runCommand    x
+      Cmd.Walk     x -> REPL.Walk.runCommand     x
 
 onCtrlC :: InputT IO (Result Error ())
 onCtrlC = return $ return ()

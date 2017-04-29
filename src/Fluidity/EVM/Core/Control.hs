@@ -87,10 +87,33 @@ breakAt x = do
     (mutate $ Sys.setBreakpoints bps)
     (yield Sys.resume)
 
+-- | Message call into a contract
+call :: MessageCall -> Control ()
+call msg = do
+  query Sys.assertIdle 
+  st <- getSystemState 
+  setLast st
+  yield $ Sys.call msg
+
+-- | Start a new message call and break on VM initialisation
+enter :: MessageCall -> Control ()
+enter x = do
+  ints <- query Sys.getInterrupts
+  bracket
+    (mutate $ Sys.setInterruptAction I.Break I.IReady)
+    (mutate $ Sys.setInterrupts ints)
+    (call x)
+
 -- | Resume execution until next breaking interrupt
 continue :: Control ()
 continue =
   yield Sys.resume
+
+-- | Abandon transaction and roll back to previous state
+abort :: Control ()
+abort = do
+  query Sys.assertActive
+  getLast >>= setSystemState
 
 
 resume = yield Sys.resume
@@ -150,19 +173,7 @@ mutateBlockchain = mutate . Sys.mutateChain
 queryBlockchain  = query  . Sys.queryChain
 queryVM          = query  . Sys.query
 mutateVM         = mutate . Sys.mutate
-commitBlock      = mutate Sys.commitBlock
-
-call :: MessageCall -> Control ()
-call msg = do
-  query Sys.assertIdle 
-  st <- getSystemState 
-  setLast st
-  yield $ Sys.call msg
-
-abort :: Control ()
-abort = do
-  query Sys.assertActive
-  getLast >>= setSystemState
+commitBlock    x = mutate $ Sys.commitBlock x
 
 yield :: Sys () -> Control ()
 yield ma = do

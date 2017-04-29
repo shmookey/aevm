@@ -60,8 +60,8 @@ getBlock n = getBlocks >>= \xs ->
 
 -- | Commit a block and move on to the next one.
 -- Ensure there are no transactions in progress!
-commitBlock :: Blockchain ()
-commitBlock = 
+commitBlock :: Integer -> Blockchain ()
+commitBlock t = 
   let
     update k f v = let x = uint v in value (f x) (Env k $ toBytes x)
   in do
@@ -69,7 +69,7 @@ commitBlock =
     current <- getCurrentBlock
     setBlocks $ blocks ++ [current]
     setCurrentBlock $ current
-      { blkTime   = update BlockTime   (+1) $ blkTime current
+      { blkTime   = update BlockTime   (+t) $ blkTime current
       , blkHash   = update BlockHash   (+1) $ blkHash current
       , blkNumber = update BlockNumber (+1) $ blkNumber current
       }

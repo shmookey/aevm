@@ -1,24 +1,53 @@
 TODO
+========================================================================
 
-features and bugfixes
+mission critical features and bugfixes
 ------------------------------------------------------------------------
 
-block editing
-watchdog for variable jumps
-breakpoint commands
-command aliases
-walk command
+reentrant calls
 event patterns
-unified value formatter
-deduplicate log history
+pathfinder refactor
+
+
+non-critical features of significant usefulness
+------------------------------------------------------------------------
+
 transactions
 call ids
-batch progress indicator
+watchdog for variable jumps
 remove Outcome, show path trace instead
+batch progress indicator
+unboxed values
+blockchain improvements
+ - edit current block properties
+ - rollback to block number
+ - store accountdb and codedb in block
+more unit tests (always)
+
+
+low priority features - "nice to have"
+------------------------------------------------------------------------
+
+vm state overlay
+command aliases
+breakpoint commands
+unified value formatter
 default menu items
 smart formatting in prompt
-unboxed values
-reentrant calls
+deduplicate log history
+move Control out of Core
+import cleanup
+help pages
+term names in parser errors
+repl system time
+non-interactive (scripted) mode
+
+
+non-critical bugs
+------------------------------------------------------------------------
+
+none? (wow)
+
 
 done
 ------------------------------------------------------------------------
@@ -28,4 +57,9 @@ evm "enter" command
 fix command error caret
 rename inspect to show
 disassembly slices
+specify next block time
+walk command
+pretty-printer for states
+bug: system unit tests falsely passing
+bug: pathfinder does not show any paths
 

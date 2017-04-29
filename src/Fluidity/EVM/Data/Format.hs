@@ -44,6 +44,10 @@ stubAddress :: Bytes a => a -> String
 stubAddress = toString . colour Magenta . ("0x" ++) . take 8
   . B8.unpack . B16.encode . padBytes 20 . truncate 20 . toBytes
 
+-- | Format a hex stub from the upper 2 bytes of an address, no colours or 0x prefix
+stubAddress' :: Bytes a => a -> String
+stubAddress' = take 4 . B8.unpack . B16.encode . padBytes 20 . truncate 20 . toBytes
+
 -- | Format a hex stub from the lower 4 bytes of a value
 stubEnd :: Bytes a => a -> String
 stubEnd = toHex . B.drop 28 . toWord 32 . toBytes

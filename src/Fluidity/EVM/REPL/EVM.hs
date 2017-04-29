@@ -79,10 +79,10 @@ abort = mutate Control.abort
 
 call :: Cmd.Address -> Value -> Value -> ByteField -> REPL ()
 call addr value gas calldata = do
-  caller <- getAddress
+  caller <- getCaller
   callee <- uniqueAddress addr
   let msg = MessageCall
-              { msgCaller = setProv (Prov.Usr Prov.Caller $ toBytes caller) caller
+              { msgCaller = caller
               , msgCallee = mkAddress callee
               , msgValue  = value
               , msgGas    = gas
@@ -93,11 +93,17 @@ call addr value gas calldata = do
 
 enter :: Cmd.Address -> Value -> Value -> ByteField -> REPL ()
 enter addr value gas calldata = do
-  ints <- querySys Sys.getInterrupts
-  bracket
-    (mutateSys $ Sys.setInterruptAction I.Break I.IReady)
-    (mutateSys $ Sys.setInterrupts ints)
-    (call addr value gas calldata)
+  caller <- getCaller
+  callee <- uniqueAddress addr
+  let msg = MessageCall
+              { msgCaller = caller
+              , msgCallee = mkAddress callee
+              , msgValue  = value
+              , msgGas    = gas
+              , msgData   = calldata
+              }
+  printLn msg
+  yield $ Control.enter msg
 
 showStack :: REPL ()
 showStack = 

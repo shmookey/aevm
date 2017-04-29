@@ -10,6 +10,7 @@ import Control.Monad.Resultant
 --import Data.Space.StateTree
 
 import Fluidity.EVM.Text (formatIntType)
+import Fluidity.EVM.Text.Dump (dumpCompact)
 import Fluidity.EVM.Data.Value (Value, cloneWith, uninitialised)
 import Fluidity.EVM.Core.System (Sys)
 import Fluidity.EVM.Core.VM (VM)
@@ -17,14 +18,14 @@ import Fluidity.EVM.Core.Interrupt (Interrupt, IntType)
 import qualified Fluidity.EVM.Core.System as Sys
 import qualified Fluidity.EVM.Data.Format as Format
 import qualified Fluidity.EVM.Core.VM as VM
-import qualified Fluidity.EVM.Core.Interrupt as INT
+import qualified Fluidity.EVM.Core.Interrupt as I
 
 
 data Path
   = Branch Int Path Path
   | Event  Int Path Interrupt
   | Halt   Int
-  | Fail   Sys.Error
+  | Fail   Sys.Error Sys.State
   | Error  String
   | Loop   Int
   | Snip
@@ -42,8 +43,8 @@ formatPath = finish . format ([], [])
       Error e -> 
         let lbl = "internal error: " ++ e
         in (lbl : cur, acc)
-      Fail e -> 
-        let lbl = "Fail: " ++ show e
+      Fail e st -> 
+        let lbl = "Fail: " ++ show e ++ " \n" ++ dumpCompact st
         in (lbl : cur, acc)
       Halt x -> 
         let lbl = Format.codePtr x ++ ":Halt"
@@ -52,7 +53,7 @@ formatPath = finish . format ([], [])
         let lbl = "[" ++ Format.codePtr x ++ "]"
         in (lbl : cur, acc)
       Event x p' i  -> 
-        let name = formatIntType $ INT.iType i
+        let name = formatIntType $ I.iType i
             lbl  = Format.codePtr x ++ ":" ++ name
         in format (lbl : cur, acc) p'
       Branch x a b -> 
@@ -73,10 +74,10 @@ formatPath = finish . format ([], [])
               Halt _  -> Format.codePtr x ++ ":Halt"
               _       -> "[" ++ Format.codePtr x ++ "]"
             Nothing -> case p of
-              Error e -> "internal error (" ++ e ++ ")"
-              Fail e  -> "Fail (" ++ show e ++ ")"
-              Snip    -> "<snip>"
-              Loop x  -> "[" ++ Format.codePtr x ++ "]"
+              Error e  -> "internal error (" ++ e ++ ")"
+              Fail e s -> "Fail (" ++ show e ++ " \n" ++ dumpCompact s ++ ")"
+              Snip     -> "<snip>"
+              Loop x   -> "[" ++ Format.codePtr x ++ "]"
         in
           ([], line : (lines ++ acc))
 
@@ -89,18 +90,6 @@ formatPath = finish . format ([], [])
       []     -> "INVALID"
       t : ts -> t ++ intercalate " -> " ts
 
-
-tracePaths :: Sys.State -> Path
-tracePaths state =
-  let
-    state' = state { Sys.stStatus = Sys.Running , Sys.stConfig = config }
-    config = Sys.Config
-      { Sys.cInterrupts  = INT.defaults
-      , Sys.cStrategy    = Sys.Preempt
-      , Sys.cBreakpoints = [] 
-      }
-  in
-    pruneLoops . pruneLoops . pruneLoops . filterErrors . deduplicate $ explore state'
 
 pruneLoops :: Path -> Path
 pruneLoops path = prune path
@@ -133,7 +122,7 @@ nodeList = foldP (\acc -> f acc . loc) []
 loc :: Path -> Maybe Int
 loc p = case p of
   Error _      -> Nothing
-  Fail _       -> Nothing
+  Fail _ _     -> Nothing
   Snip         -> Nothing
   Loop _       -> Nothing
   Halt x       -> Just x
@@ -158,7 +147,7 @@ filterErrors p = case p of
                     Snip -> Snip
                     a'   -> Event x a' i
   Halt _       -> p
-  Fail _       -> Snip
+  Fail _ _     -> Snip
   Error _      -> Snip
   Loop _       -> p
 
@@ -178,11 +167,27 @@ deduplicate = snd . dedupe []
         Event x p i  -> let acc'        = x : acc
                             (acc'', p') = dedupe acc' p
                         in x `prune` case i of 
-                          INT.Stop     -> (acc' , Halt x)
-                          INT.Return _ -> (acc' , Halt x)
+                          I.Stop     -> (acc' , Halt x)
+                          I.Return _ -> (acc' , Halt x)
                           _            -> (acc'', Event x p' i)
         Halt x       -> x `prune` (x:acc, Halt x)
         _            -> (acc, p)
+
+-- State tree generation
+-- ---------------------------------------------------------------------
+
+tracePaths :: Sys.State -> Path
+tracePaths state =
+  let
+    state' = state { Sys.stConfig = config }
+    config = Sys.Config
+      { Sys.cInterrupts  = I.defaults
+      , Sys.cStrategy    = Sys.Preempt
+      , Sys.cBreakpoints = [] 
+      }
+  in
+    pruneLoops . pruneLoops . pruneLoops . filterErrors . deduplicate $ explore state'
+    --explore state'
 
 -- | Build a potentially infinite tree of pathways that execution can follow
 explore :: Sys.State -> Path
@@ -196,12 +201,12 @@ explore st =
     zero     = uninitialised
     one      = cloneWith (const 1) zero
 
-    exploreWith f st = case fmap explore (updateStack f st) of
+    exploreWith f s = case fmap explore (updateStack f s) of
       Right x -> x
       Left e  -> Error e
 
-    updateStack f st = update <$> updateVMs f (Sys.stStack st)
-      where update x = st { Sys.stStack = x }
+    updateStack f s = update <$> updateVMs f (Sys.stStack s)
+      where update x = s { Sys.stStack = x }
 
     updateVMs f vs = case vs of 
       v:vs' -> flip fmap (vmStack v) $ \x -> (v {VM.stStack = f x}) : vs'
@@ -213,11 +218,11 @@ explore st =
 
   in case r of
     Sys.Done _ -> Error "exploreed too deep"
-    Sys.Fail e -> Fail e
+    Sys.Fail e -> Fail e st'
     Sys.Susp i -> case i of
-      INT.Stop      -> Halt pc
-      INT.Return _  -> Halt pc
-      INT.JumpI _ _ -> Branch pc left right
+      I.Stop      -> Halt pc
+      I.Return _  -> Halt pc
+      I.JumpI _ _ -> Branch pc left right
       _             -> Event pc (explore st') i
 
 --data Halt = InternalError | SystemError | Success
@@ -242,9 +247,9 @@ explore st =
 --    (st', Sys.Done _) -> Halt InternalError
 --    (st', Sys.Fail _) -> Halt SystemError
 --    (st', Sys.Susp i) -> case i of
---      INT.Stop      -> Halt Success
---      INT.Return _  -> Halt Success
---      INT.JumpI _ p -> 
+--      I.Stop      -> Halt Success
+--      I.Return _  -> Halt Success
+--      I.JumpI _ p -> 
 --
 --getPC :: Sys.State -> Maybe Int
 --getPC sys = do

@@ -34,7 +34,7 @@ data State = State
   , stStack  :: [VM.State]
   , stStatus :: Status
   , stConfig :: Config
-  } deriving (Show, Generic, NFData)
+  } deriving (Eq, Show, Generic, NFData)
 
 data Status 
   = Running                                    -- Running normally
@@ -63,7 +63,7 @@ data Config = Config
   { cInterrupts  :: IntConfig
   , cStrategy    :: Strategy
   , cBreakpoints :: [Int]
-  } deriving (Show, Generic, NFData)
+  } deriving (Eq, Show, Generic, NFData)
 
 data Strategy
   = Immediate -- Act as soon as the interrupt is received
@@ -113,9 +113,9 @@ onInterrupt i st = beforeBreakpoints i $ do
       case i of I.Cycle _ -> makePreemptible
                 I.Ready   -> makePreemptible
                 _         -> return () 
-      case act of Echo   -> preempt >> interrupt i >> return Nothing
-                  Break  -> preempt >> return (Just i)
-                  Ignore -> return Nothing
+      case act of Echo    -> preempt (interrupt i >> return Nothing)
+                  Break   -> preempt (return $ Just i)
+                  Ignore  -> return Nothing
 
     Wait -> case (stat, i) of
       (Waiting act' i', I.Cycle _) -> do
@@ -124,9 +124,14 @@ onInterrupt i st = beforeBreakpoints i $ do
                      Break  -> return (Just i')
                      Ignore -> return Nothing
 
-      _ -> do
-        when (act /= Ignore) $ setStatus (Waiting act i)
-        return Nothing
+      _ ->
+        let needWait = case i of { I.Cycle _ -> False ; I.Ready -> False ; _ -> True }
+        in if needWait
+           then do when (act /= Ignore) (setStatus $ Waiting act i)
+                   return Nothing
+           else case act of Echo   -> interrupt i >> return Nothing
+                            Break  -> return (Just i)
+                            Ignore -> return Nothing
 
 beforeBreakpoints :: Interrupt -> Sys (Maybe Interrupt) -> Sys (Maybe Interrupt)
 beforeBreakpoints i ma = case i of { I.Cycle n -> f n ; _ -> ma }
@@ -141,12 +146,14 @@ makePreemptible = do
   stack <- getStack
   setStatus $ Preemptible chain stack
 
-preempt :: Sys ()
-preempt = getStatus >>= \case
+preempt :: Sys (Maybe Interrupt) -> Sys (Maybe Interrupt)
+preempt ma = getStatus >>= \case
+  Preempted -> return Nothing
   Preemptible chain stack -> do 
     setChain chain
     setStack stack
     setStatus Preempted
+    ma
   _ -> fail $ InternalError "non-preemptible state"
 
 
@@ -208,7 +215,9 @@ call msg = mustBeIdle $ do
 resume :: Sys ()
 resume = mustBeActive $ do
   status <- getStatus
-  when (status /= Preempted) makePreemptible
+  strat  <- getStrategy
+  when (strat == Preempt && status /= Preempted)
+    makePreemptible
   (_, result) <- peek >>= execute VM.resume mutateChain onInterrupt
   case result of
     Left _        -> return ()
@@ -231,8 +240,8 @@ mutate ma = do
 -- ---------------------------------------------------------------------
 
 -- | Like `Blockchain.commitBlock`, but fails if there is a message call in progress
-commitBlock :: Sys ()
-commitBlock = mustBeIdle $ mutateChain Blockchain.commitBlock
+commitBlock :: Integer -> Sys ()
+commitBlock x = mustBeIdle (mutateChain $ Blockchain.commitBlock x)
 
 -- | Run an operation in the Blockchain monad with the current blockchain state, keeping changes
 mutateChain :: Blockchain a -> Sys a

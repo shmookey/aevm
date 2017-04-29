@@ -66,6 +66,8 @@ addProv f (Value x p) = Value x (f p)
 setProv :: Prov -> Value -> Value
 setProv p (Value x _) = Value x p
 
+noProv :: Integer -> Value 
+noProv x = Value x Nul
 
 -- Conversions
 -- ---------------------------------------------------------------------

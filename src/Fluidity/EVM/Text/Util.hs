@@ -1,6 +1,7 @@
 module Fluidity.EVM.Text.Util where
 
-import Data.Char (toUpper, toLower)
+import Data.List (dropWhile, dropWhileEnd)
+import Data.Char (isSpace, toUpper, toLower)
 
 
 -- Padding
@@ -27,6 +28,16 @@ indent :: Int -> String -> String
 indent n = unlines . map (pad ++) . lines
   where pad = take n $ repeat ' '
 
+-- Trimming whitespace
+
+trim :: String -> String
+trim = trimLeft . trimRight
+
+trimLeft :: String -> String
+trimLeft = dropWhile isSpace
+
+trimRight :: String -> String
+trimRight = dropWhileEnd isSpace
 
 -- Capitalisation
 

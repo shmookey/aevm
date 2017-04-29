@@ -55,9 +55,11 @@ library
                      , Fluidity.EVM.REPL.Parallel
                      , Fluidity.EVM.REPL.Parser
                      , Fluidity.EVM.REPL.State
+                     , Fluidity.EVM.REPL.Walk
 
                      , Fluidity.EVM.Text
                      , Fluidity.EVM.Text.Disassembly
+                     , Fluidity.EVM.Text.Dump
                      , Fluidity.EVM.Text.Util
 
                      , Fluidity.EVM
@@ -149,6 +151,7 @@ test-suite execution
                      , base >= 4.7 && < 5
                      , bytestring
                      , containers
+                     , deepseq
                      , tasty
                      , tasty-hspec
                      , QuickCheck

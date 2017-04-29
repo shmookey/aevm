@@ -201,6 +201,10 @@ matchingAccounts address =
       _:_      -> return accts
       []       -> fail $ NoMatchingAccount addr
 
+getCaller :: REPL Value
+getCaller = do
+  x <- getAddress
+  return $ setProv (Prov.Usr Prov.Caller $ toBytes x) x
 
 -- General IO
 -- ---------------------------------------------------------------------

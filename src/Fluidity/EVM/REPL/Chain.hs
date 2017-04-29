@@ -19,6 +19,7 @@ import Fluidity.EVM.Data.Format (stub, currency)
 import qualified Fluidity.EVM.Data.Account as Acct
 import qualified Fluidity.EVM.Data.Format as Format
 import qualified Fluidity.EVM.Core.Blockchain as Blockchain
+import qualified Fluidity.EVM.Core.Control as Control
 import qualified Fluidity.EVM.REPL.Command as Cmd
 import qualified Fluidity.EVM.Text.Disassembly as Disasm
 
@@ -26,9 +27,9 @@ import qualified Fluidity.EVM.Text.Disassembly as Disasm
 runCommand :: Cmd.Chain -> REPL ()
 runCommand cmd = case cmd of
   Cmd.ChainBlock block -> case block of
-    Cmd.BlockCommit -> blockCommit
-    Cmd.BlockShow x -> blockShow x
-    Cmd.BlockList   -> blockList
+    Cmd.BlockCommit x -> blockCommit x
+    Cmd.BlockShow x   -> blockShow x
+    Cmd.BlockList     -> blockList
   Cmd.ChainAccount account -> case account of
     Cmd.AccountList prefix         -> listAccounts prefix
     Cmd.AccountBalanceGet a        -> getBalance a
@@ -42,9 +43,9 @@ runCommand cmd = case cmd of
     Cmd.AccountStorageSetKey a k v -> setStorageAt a k v
 
 
-blockCommit :: REPL ()
-blockCommit = do
-  mutateBlockchain Blockchain.commitBlock
+blockCommit :: Integer -> REPL ()
+blockCommit x = do
+  mutate $ Control.commitBlock x
 
 blockShow :: Maybe Integer -> REPL ()
 blockShow mi = 

@@ -6,7 +6,7 @@ import Data.ByteString.Char8 (ByteString)
 import Data.List (intercalate)
 import Data.Functor.Identity (Identity)
 import Data.Semigroup ((<>))
-import Text.Parsec (sepBy, (<?>))
+import Text.Parsec (eof, lookAhead, optional, sepBy, (<?>))
 import qualified Text.Parsec.Char as PC
 import qualified Text.Parsec as P
 
@@ -225,6 +225,10 @@ cmdWalk = do
          space
          x <- address
          return $ WalkMatch x
+    , do x <- address
+         space
+         y <- callGas
+         return $ WalkAddress x y
     ]
 
 -- State commands
@@ -255,8 +259,11 @@ cmdChain =
   let
     chainBlock :: Parse Block
     chainBlock = keyword "block" >> space >> P.choice
-      [ const BlockCommit <$> keyword "commit"
-      , const BlockList <$> keyword "list"
+      [ const BlockList <$> keyword "list"
+      , do keyword "commit"
+           space
+           duration <- integer
+           return $ BlockCommit duration
       , do keyword "show"
            space
            i <- P.optionMaybe litInt
@@ -387,13 +394,13 @@ defaultGas = value g . Usr Prov.CallGas $ toBytes g
   where g = 1000
 
 callValue :: Parse Value
-callValue = do
+callValue = term "call value" $ do
   x <- currencyAmount
   return . value x . Usr Prov.CallValue $ toBytes x
 
 callGas :: Parse Value
-callGas = do
-  x <- litInt
+callGas = term "call gas" $ do
+  x <- integer
   return . value x . Usr Prov.CallGas $ toBytes x
 
 methodArg :: Parse MethodArg
@@ -450,21 +457,23 @@ encodeCallData cd =
 
 
 currencyAmount :: Parse Integer
-currencyAmount = litInt -- TODO: units
+currencyAmount = term "currency amount" $
+  integer -- TODO: units
 
 address :: Parse Address
-address = P.choice . map P.try $
-  [ do bs <- hex
-       star
-       return $ Prefix bs
-  , do bs <- hex
-       return $ Address bs
-  , do star
-       return $ Prefix mempty
-  ]
+address = term "address" $ do
+  P.choice . map P.try $
+    [ do bs <- hex
+         star
+         return $ Prefix bs
+    , do bs <- hex
+         return $ Address bs
+    , do star
+         return $ Prefix mempty
+    ]
     
 slice :: Parse Slice
-slice = do
+slice = term "range slice" $ do
   openBracket
   optionalSpace
   start <- P.optionMaybe int
@@ -541,6 +550,10 @@ word         = token $ \t -> case t of
                  Word x   -> Just x
                  _        -> Nothing
 
+end = term "end of command" $ do
+  optional space
+  lookAhead eof
+
 optionalSpace = P.optional space
 commaSpace = (P.try (optionalSpace >> comma >> optionalSpace)) <?> "comma"
 colonSpace = (P.try (optionalSpace >> colon >> optionalSpace)) <?> "colon"
@@ -570,7 +583,11 @@ token f =
   in
     P.token showTok posFromTok testTok
 
+term :: String -> Parse a -> Parse a
+term x = tag x . P.try
 
+tag :: String -> Parse a -> Parse a
+tag = flip (<?>)
 
 
 -- Lexer

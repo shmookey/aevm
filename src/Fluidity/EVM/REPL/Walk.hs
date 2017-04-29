@@ -23,39 +23,36 @@ import Fluidity.EVM.Types
 import Fluidity.EVM.Data.Transaction (MessageCall(..))
 import Fluidity.EVM.Analyse.Outcome (PostMortem)
 import Fluidity.EVM.Text ()
+import Fluidity.EVM.Data.Value (Value, mkAddress, noProv)
 import qualified Fluidity.EVM.Analyse.Pathfinder as Pathfinder
 import qualified Fluidity.EVM.REPL.Command as Cmd
 import qualified Fluidity.EVM.Core.VM as VM
+import qualified Fluidity.EVM.Core.Control as Control
 import qualified Fluidity.EVM.Core.System as Sys
 import qualified Fluidity.EVM.Core.Interrupt as INT
 import qualified Fluidity.EVM.Data.Format as Format
 
 
-runCommand :: Cmd.EVM -> REPL ()
+runCommand :: Cmd.Walk -> REPL ()
 runCommand cmd = case cmd of
-  Cmd.Go           -> go
-  Cmd.Step         -> step
-  Cmd.BreakAt x    -> breakAt x
-  Cmd.Paths        -> paths
-  Cmd.Call a v g d -> call a v g d
-  Cmd.Abort        -> abort
-  Cmd.Inspect c    -> case c of
-    Cmd.InspectStack      -> inspectStack
-    Cmd.InspectMemory     -> inspectMemory
-    Cmd.InspectStorage    -> inspectStorage
-    Cmd.InspectCall       -> inspectCall
-    Cmd.InspectCode r     -> inspectCode r
-  Cmd.Interrupt c   -> case c of
-    Cmd.InterruptOn x     -> interruptOn x
-    Cmd.InterruptOff x    -> interruptOff x
-    Cmd.InterruptShow     -> interruptShow
-    Cmd.InterruptAction x -> interruptAction x
-    Cmd.InterruptPoint x  -> interruptPoint x
+  Cmd.WalkMatch   x   -> walkMatch   x
+  Cmd.WalkAddress x g -> walkAddress x g
 
 
+walkMatch :: Cmd.Address -> REPL ()
+walkMatch x = do
+  putStrLn $ "not implemented"
+--  st <- querySys getState
+--  putStrLn . Pathfinder.formatPath $ Pathfinder.tracePaths st
 
-paths :: REPL ()
-paths = do
-  st <- querySys getState
+walkAddress :: Cmd.Address -> Value -> REPL ()
+walkAddress x gas = do
+  addr   <- mkAddress <$> uniqueAddress x
+  caller <- getCaller
+  let msg = MessageCall caller addr (noProv 0) gas mempty
+  sys    <- querySys getState
+  yield $ Control.enter msg
+  st     <- querySys getState
+  mutateSys $ setState sys
   putStrLn . Pathfinder.formatPath $ Pathfinder.tracePaths st
 

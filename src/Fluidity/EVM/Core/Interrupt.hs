@@ -125,4 +125,10 @@ nobreak c = foldl f c types
                 then setAction Echo x c
                 else c
 
+-- | Switch all instances of "Echo" to "Break"
+echoToBreak :: IntConfig -> IntConfig
+echoToBreak c = foldl f c types
+  where f c x = if getAction x c == Echo
+                then setAction Break x c
+                else c
 
