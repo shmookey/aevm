@@ -187,7 +187,6 @@ tracePaths state =
       }
   in
     pruneLoops . pruneLoops . pruneLoops . filterErrors . deduplicate $ explore state'
-    --explore state'
 
 -- | Build a potentially infinite tree of pathways that execution can follow
 explore :: Sys.State -> Path

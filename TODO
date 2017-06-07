@@ -1,65 +1,67 @@
+========================================================================
 TODO
 ========================================================================
 
-mission critical features and bugfixes
+main objectives
 ------------------------------------------------------------------------
+core:  calls between contracts
+core:  reentrant calls
+trace: event patterns
+trace: pathfinder influence-based branching
+trace: path module
 
-reentrant calls
-event patterns
-pathfinder refactor
 
-
-non-critical features of significant usefulness
+high priority
 ------------------------------------------------------------------------
+trace: pathfinder refactor
+trace: pathfinder to use watchdog events
+core:  transaction support
+trace: call ids
+trace: watchdog for variable jumps
+batch: remove Outcome, show path trace instead
+repl:  batch progress indicator
+perf:  unboxed value types
+chain: editing and rollback functions
+repl:  edit current block properties
+repl:  rollback to block number
+chain: store accountdb and codedb in block
+main:  non-interactive (scripted) mode
+test:  write more of them
 
-transactions
-call ids
-watchdog for variable jumps
-remove Outcome, show path trace instead
-batch progress indicator
-unboxed values
-blockchain improvements
- - edit current block properties
- - rollback to block number
- - store accountdb and codedb in block
-more unit tests (always)
 
-
-low priority features - "nice to have"
+low priority
 ------------------------------------------------------------------------
+repl: vm state overlay
+repl: command aliases
+repl: breakpoint commands
+repl: default menu items
+repl: smart formatting in prompt
+repl: deduplicate log history
+repl: help pages
+text: unified value formatter
+core: move Control out of Core
+meta: import cleanup
+repl: term names in parser errors
+repl: system time
+repl: output logging
+repl: export state snapshot
 
-vm state overlay
-command aliases
-breakpoint commands
-unified value formatter
-default menu items
-smart formatting in prompt
-deduplicate log history
-move Control out of Core
-import cleanup
-help pages
-term names in parser errors
-repl system time
-non-interactive (scripted) mode
 
-
-non-critical bugs
+bugs
 ------------------------------------------------------------------------
-
-none? (wow)
+no known bugs
 
 
 done
 ------------------------------------------------------------------------
-
-watchdog for return and stop
-evm "enter" command
-fix command error caret
-rename inspect to show
-disassembly slices
-specify next block time
-walk command
-pretty-printer for states
-bug: system unit tests falsely passing
-bug: pathfinder does not show any paths
+trace: watchdog for return and stop
+repl:  evm "enter" command
+repl:  fix command error caret
+meta:  rename inspect to show
+repl:  disassembly slices
+chain: specify next block time
+trace: walk command
+debug: pretty-printer for states
+bug:   system unit tests falsely passing
+bug:   pathfinder does not show any paths
 
